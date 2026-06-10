@@ -5,7 +5,7 @@ import { tokens } from '../../theme/tokens';
 const theme = createTheme({
   palette: {
     mode: 'dark',
-    primary: { main: tokens.ember, contrastText: '#0C1018' },
+    primary: { main: tokens.ember, contrastText: tokens.bg },
     secondary: { main: tokens.violet },
     background: { default: tokens.bg, paper: tokens.panel },
     text: { primary: tokens.ink, secondary: tokens.muted },

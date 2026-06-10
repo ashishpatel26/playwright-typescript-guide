@@ -32,7 +32,6 @@ interface StepState { status: StepStatus; error?: string; }
 
 const STEP_DELAY = 500;
 
-// Fix 6: hoisted to module scope
 const pause = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 function PwRunnerInner({
@@ -40,9 +39,9 @@ function PwRunnerInner({
 }: PwRunnerProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const runningRef = useRef(false);
-  const mountedRef = useRef(true); // Fix 1: unmount guard
+  const mountedRef = useRef(true);
   const resolveRef = useRef<((ok: boolean, err?: string) => void) | null>(null);
-  const iframeLoadedRef = useRef<(() => void) | null>(null); // Fix 4: iframe readiness
+  const iframeLoadedRef = useRef<(() => void) | null>(null);
   const [stepStates, setStepStates] = useState<StepState[]>(() =>
     steps.map(() => ({ status: 'pending' as StepStatus }))
   );
@@ -52,10 +51,8 @@ function PwRunnerInner({
 
   const src = `${BASE}practice-pages/${mockPage}`;
 
-  // Fix 1: cleanup effect — mark unmounted
   useEffect(() => () => { mountedRef.current = false; }, []);
 
-  // Fix 2: reset stepStates when steps prop changes
   useEffect(() => {
     setStepStates(steps.map(() => ({ status: 'pending' as StepStatus })));
     setDone(false);
@@ -72,7 +69,6 @@ function PwRunnerInner({
     return () => window.removeEventListener('message', handler);
   }, []);
 
-  // Fix 4: helper to wait for iframe onLoad
   const waitForIframeLoad = useCallback(() => {
     return new Promise<void>(resolve => {
       iframeLoadedRef.current = resolve;
@@ -85,7 +81,6 @@ function PwRunnerInner({
         resolveRef.current = null;
         resolve({ ok, error });
       };
-      // Fix 3: use window.location.origin instead of '*'
       iframeRef.current?.contentWindow?.postMessage({
         type: 'pw-step',
         action: step.action,
@@ -103,7 +98,6 @@ function PwRunnerInner({
   }, []);
 
   const run = useCallback(async () => {
-    // Fix 5: atomic check-and-set (already correct order — verified)
     if (runningRef.current) return;
     runningRef.current = true;
     setRunning(true);
@@ -111,11 +105,10 @@ function PwRunnerInner({
     setStepStates(steps.map(() => ({ status: 'pending' })));
     setIframeKey(k => k + 1); // reload iframe to reset state
 
-    // Fix 4: wait for iframe load event instead of fixed 700ms delay
     await waitForIframeLoad();
-    if (!mountedRef.current) return; // Fix 1
-    await pause(200); // small buffer after load
-    if (!mountedRef.current) return; // Fix 1
+    if (!mountedRef.current) return;
+    await pause(200);
+    if (!mountedRef.current) return;
 
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
@@ -125,14 +118,13 @@ function PwRunnerInner({
       );
 
       await pause(step.delayMs ?? STEP_DELAY);
-      if (!mountedRef.current) return; // Fix 1
+      if (!mountedRef.current) return;
 
       const { ok, error } = await sendStep(step);
-      if (!mountedRef.current) return; // Fix 1
+      if (!mountedRef.current) return;
 
       const passed = step.shouldFail ? !ok : ok;
 
-      // Fix 7: don't store error on passing steps
       setStepStates(prev =>
         prev.map((s, idx) => idx === i ? { status: passed ? 'pass' : 'fail', error: passed ? undefined : error } : s)
       );
@@ -235,7 +227,7 @@ function PwRunnerInner({
 
       {/* Step timeline */}
       <Box sx={{
-        bgcolor: '#0A0E15', borderTop: '1px solid', borderColor: 'divider',
+        bgcolor: tokens.terminalBg, borderTop: '1px solid', borderColor: 'divider',
         px: 2, py: 1.5,
       }}>
         {done && (
@@ -255,8 +247,7 @@ function PwRunnerInner({
             <Box key={i} sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
               <Box sx={{
                 fontFamily: '"IBM Plex Mono",monospace', fontSize: 13,
-                // Fix 2: guard stepStates[i] access
-                color: statusColor[(stepStates[i] ?? { status: 'pending' as StepStatus }).status], minWidth: 16, mt: '1px',
+                        color: statusColor[(stepStates[i] ?? { status: 'pending' as StepStatus }).status], minWidth: 16, mt: '1px',
                 display: 'flex', alignItems: 'center',
               }}>
                 {(stepStates[i] ?? { status: 'pending' as StepStatus }).status === 'running'
@@ -266,8 +257,7 @@ function PwRunnerInner({
               <Box>
                 <Typography sx={{
                   fontFamily: '"IBM Plex Mono",monospace', fontSize: 12,
-                  // Fix 2: guard stepStates[i] access
-                  color: (stepStates[i] ?? { status: 'pending' as StepStatus }).status === 'pending' ? tokens.faint : tokens.ink,
+                            color: (stepStates[i] ?? { status: 'pending' as StepStatus }).status === 'pending' ? tokens.faint : tokens.ink,
                 }}>
                   {step.description}
                 </Typography>

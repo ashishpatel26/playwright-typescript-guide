@@ -5,9 +5,7 @@ const BASE = '/playwright-typescript-guide';
 test.describe('Widget smoke tests', () => {
   test('QuizCard renders on why-testing-exists', async ({ page }) => {
     await page.goto(`${BASE}/levels/level-00/why-testing-exists/`);
-    await expect(page.locator('[data-testid="quiz-card"]').or(
-      page.locator('.MuiCard-root')
-    ).first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('[data-testid="quiz-card"]')).toBeVisible({ timeout: 10000 });
   });
 
   test('ConceptDiagram renders on testing-pyramid', async ({ page }) => {

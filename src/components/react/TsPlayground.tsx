@@ -163,7 +163,7 @@ function TsPlaygroundInner({ starter, height = 260, label = 'TypeScript Playgrou
 
       {(output.length > 0 || running) && (
         <Box sx={{
-          bgcolor: '#0A0E15', borderTop: '1px solid', borderColor: 'divider',
+          bgcolor: tokens.terminalBg, borderTop: '1px solid', borderColor: 'divider',
           px: 2, py: 1.25, maxHeight: 180, overflowY: 'auto',
           fontFamily: '"IBM Plex Mono",monospace', fontSize: 13, lineHeight: 1.9,
         }}>

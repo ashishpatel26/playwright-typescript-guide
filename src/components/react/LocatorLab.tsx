@@ -72,7 +72,7 @@ function LocatorLabInner({ page = 'login.html', height = 400 }: LocatorLabProps)
     }
     iframeRef.current.contentWindow.postMessage(
       { type: 'pw-query', kind: k, value: v.trim(), name: n.trim() },
-      '*',
+      window.location.origin,
     );
   }, []);
 

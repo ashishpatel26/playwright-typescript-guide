@@ -3,6 +3,7 @@ import { Box, CircularProgress } from '@mui/material';
 import { MuiProvider } from './MuiProvider';
 import { tokens } from '../../theme/tokens';
 
+// Ready for MDX content that uses flowchart/sequenceDiagram syntax via the `chart` prop.
 let mermaidInitialized = false;
 
 async function getMermaid() {

@@ -15,6 +15,7 @@ export const tokens = {
   violet: '#A5A0FF',
   cyan: '#56D4DD',
   codeAccent: '#FFD9A0',
+  terminalBg: '#0A0E15',
 } as const;
 
 export type Tokens = typeof tokens;

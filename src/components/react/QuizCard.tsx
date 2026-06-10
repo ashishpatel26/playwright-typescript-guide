@@ -39,7 +39,7 @@ function QuizCardInner({ storageKey, questions }: QuizCardInnerProps) {
   const done = revealed.filter(Boolean).length;
 
   return (
-    <Box sx={{ my: 3 }}>
+    <Box data-testid="quiz-card" sx={{ my: 3 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
         <Typography
           variant="caption"
