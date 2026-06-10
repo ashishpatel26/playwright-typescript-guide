@@ -1,0 +1,100 @@
+---
+title: Shift Left Testing
+level: 0
+order: 4
+description: Move testing earlier in the SDLC, understand QA vs QE, and learn why automation engineers own quality differently than traditional testers.
+duration: 25 min
+status: complete
+widgets: ['quiz']
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+import Tip from '../../../components/astro/Tip.astro';
+
+## What "shift left" means
+
+On a traditional SDLC timeline (requirements → design → development →
+testing → deployment), testing sat at the right end. Shift left means pulling
+quality activities earlier — requirements review, design review, unit tests
+written before or alongside code, test automation in CI before merge.
+
+```
+Traditional:  [ Requirements ][ Design ][ Dev ][ TEST ][ Deploy ]
+Shift left:   [ Req+Test ][ Design+Test ][ Dev+Test ][ Test ][ Deploy ]
+```
+
+## STLC — Software Test Life Cycle
+
+The test lifecycle mirrors the development lifecycle:
+
+1. **Requirements analysis** — identify what to test, clarify ambiguities before code is written
+2. **Test planning** — scope, schedule, resources, risk assessment
+3. **Test design** — write test cases, design test data, define acceptance criteria
+4. **Test environment setup** — databases, browsers, test accounts, CI pipelines
+5. **Test execution** — run manual and automated tests, log defects
+6. **Test closure** — metrics, retrospective, lessons learned, archive artefacts
+
+Automation engineers spend most time on steps 1–4. Executing and reporting is
+automated.
+
+## QA vs QE — different jobs, different mindsets
+
+| | Quality Assurance (QA) | Quality Engineering (QE) |
+|---|---|---|
+| Focus | Process and standards | Engineering and automation |
+| Output | Test plans, defect reports | Test code, CI pipelines, frameworks |
+| Approach | Validate after the fact | Prevent defects through design |
+| Tools | JIRA, Zephyr, TestRail | Playwright, TypeScript, GitHub Actions |
+| Mindset | "Does it meet requirements?" | "How do we build it right the first time?" |
+
+Modern automation roles are QE: embedded in engineering teams, writing code
+alongside developers, owning CI reliability as a first-class concern.
+
+<Tip>The boundary between QA and QE is dissolving in high-performing teams. If your job title says "QA" but you write TypeScript and maintain CI pipelines, you are doing QE work.</Tip>
+
+## Three shift-left practices to adopt immediately
+
+**1. Write test IDs into markup from the start**
+
+```ts
+// Developer adds data-testid at design time
+<button data-testid="checkout-btn">Checkout</button>
+
+// Automation engineer can write the locator before the feature ships
+await page.getByTestId('checkout-btn').click();
+```
+
+**2. Define acceptance criteria as test cases**
+
+Before a ticket is developed, the automation engineer writes the test cases
+that define "done". The developer writes code until those tests pass.
+
+**3. Run the full suite in CI before merge**
+
+No PR merges with a red suite. This makes the automation engineer a
+first-class quality gate rather than an afterthought.
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="shift-left" questions={[
+  {
+    q: "What does 'shift left' mean and what problem does it solve?",
+    a: "Moving testing activities earlier in the development cycle — into requirements, design, and coding phases — rather than treating testing as the final stage. It solves the exponential cost curve: defects found in requirements review cost almost nothing; the same defect found in production costs orders of magnitude more.",
+    senior: "Shift left is an organisational change, not just a technical one. You can write early tests all day, but if your team's Definition of Done doesn't include automation and CI remains optional, the culture won't shift. The real leverage is making the automated test suite the merge gate — that forces the shift without requiring cultural buy-in upfront."
+  },
+  {
+    q: "What is the difference between QA and QE in a modern engineering team?",
+    a: "QA (Quality Assurance) is process-focused: test plans, defect tracking, compliance, standards. QE (Quality Engineering) is engineering-focused: building test automation, CI pipelines, and quality tooling as first-class software. QE engineers write production-quality code; QA professionals coordinate quality processes.",
+    senior: "In mature orgs, the QA/QE distinction matters for hiring and career paths. A QE engineer should be evaluated on code quality, test architecture, framework maintainability, and CI reliability — not defect counts. Measuring QE by defect counts creates an incentive to find bugs rather than prevent them."
+  },
+  {
+    q: "Name two concrete shift-left practices an automation engineer can implement today.",
+    a: "1. Add data-testid attributes to components at design time so locators are stable before features ship. 2. Write test cases in CI as the acceptance criteria for new tickets — the feature is 'done' when the tests pass, not when QA signs off.",
+    senior: "A third high-leverage practice: treat test environment parity as a first-class requirement. If the test environment diverges from production (different auth, different feature flags, different data), shift-left automation produces false confidence. Environment parity is the foundation that makes everything else work."
+  },
+  {
+    q: "What are the phases of the STLC and where does automation fit?",
+    a: "Requirements analysis, test planning, test design, environment setup, test execution, test closure. Automation primarily lives in test design (writing the automation code), environment setup (CI configuration), and test execution (running automatically in CI).",
+    senior: "The most undervalued STLC phase for automation engineers is requirements analysis. Automating ambiguous requirements produces passing tests against the wrong behaviour. Participating in story grooming and flagging untestable requirements early prevents entire classes of wasted automation work."
+  },
+]} />
