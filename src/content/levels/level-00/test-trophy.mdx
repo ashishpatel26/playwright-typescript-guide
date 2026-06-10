@@ -1,0 +1,102 @@
+---
+title: Test Trophy
+level: 0
+order: 3
+description: Kent C. Dodds' testing trophy puts integration tests at the centre, static analysis at the base — and explains when to reach for each layer.
+duration: 20 min
+status: complete
+widgets: ['quiz']
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+import CmdTable from '../../../components/astro/CmdTable.astro';
+
+## The shape
+
+The testing trophy inverts the pyramid's emphasis: static analysis at the
+base, integration tests as the largest investment, unit tests narrower, E2E
+tests at the top.
+
+```
+            ▲
+           E2E
+          ───────
+         Unit Tests
+        ─────────────
+      Integration Tests     ← biggest layer
+     ─────────────────────
+           Static           ← type checker, linter (free confidence)
+```
+
+## The four layers
+
+**Static analysis** — TypeScript, ESLint. Zero runtime cost. Catches type
+mismatches, undefined variables, unreachable code. Every TypeScript project
+gets this for free.
+
+**Integration tests** — test a module with its real dependencies (real
+database, real file system, real HTTP calls mocked at the network boundary).
+High confidence per test because nothing is stubbed. Playwright's component
+tests live here.
+
+**Unit tests** — test one function or class with all dependencies mocked.
+Ultra fast. High volume. Low per-test confidence because real behaviour is
+substituted. Valuable for pure algorithmic logic; overused for everything
+else.
+
+**E2E tests** — full browser, real backend, real database. Maximum
+confidence, maximum cost. Keep the count low and the scenarios high-value
+(happy path + critical failures).
+
+## Pyramid vs trophy — when each model fits
+
+Use the **pyramid** when:
+- You have a large, well-bounded backend (lots of pure logic worth unit-testing)
+- CI time is measured in seconds
+
+Use the **trophy** when:
+- Your product is primarily UI-driven
+- You cannot meaningfully unit test UI components in isolation
+- Integration tests against a real DOM give you far more confidence per
+  investment than mocked unit tests
+
+Playwright projects usually follow the **trophy**: static (TypeScript strict
+mode) + a healthy integration layer (Playwright component tests or API
+tests) + a thin E2E layer.
+
+## Static analysis is not optional
+
+```ts
+// Without TypeScript, this ships silently:
+const user = getUser(123);
+console.log(user.naem); // typo — runtime error
+
+// With TypeScript strict:
+// Property 'naem' does not exist on type 'User'. Did you mean 'name'?
+```
+
+<CmdTable rows={[
+  { c: 'tsc --noEmit', d: 'Type-check the entire project without emitting output' },
+  { c: 'eslint src/', d: 'Lint — catches logic bugs and style issues' },
+  { c: 'npx playwright test --reporter=html', d: 'Generate HTML report for integration/E2E layer' },
+]} />
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="test-trophy" questions={[
+  {
+    q: "What is the testing trophy and how does it differ from the testing pyramid?",
+    a: "The trophy (Kent C. Dodds) emphasises integration tests as the largest investment, with static analysis at the base, unit tests narrower, and E2E at the top. The pyramid emphasises unit tests at the base. The trophy reflects that integration tests give more confidence per dollar for modern UI-driven applications.",
+    senior: "The trophy/pyramid distinction is less important than fitting your test distribution to your architecture. A pure logic library benefits from pyramid shape; a React app with a REST backend benefits from trophy shape. The real question is: what is the cheapest layer at which you can detect a given class of failure?"
+  },
+  {
+    q: "Why does the trophy put static analysis at the base?",
+    a: "Static analysis (TypeScript, linters) has zero runtime cost and runs on every save. It catches a large class of defects — type errors, undefined references, dead code — before any test runs. It is the highest ROI layer of the trophy.",
+    senior: "TypeScript strict mode in particular removes an entire category of runtime failures. At Staff level, enabling strictNullChecks and noImplicitAny on a large existing codebase is often the highest-leverage quality investment you can make — more valuable than doubling your E2E count."
+  },
+  {
+    q: "When would you prefer integration tests over unit tests for a Playwright project?",
+    a: "When the behaviour you want to test only emerges from the interaction of real components — a button that triggers an API call that updates the UI. Mocking any of those layers at the unit level would not test the actual user-facing behaviour. Integration tests exercise the real interaction.",
+    senior: "Unit tests are best for pure functions, algorithmic helpers, and data transformers where you can enumerate inputs and outputs exhaustively. When the 'unit' is a React component or a page object, integration testing against a real DOM or real API gives you confidence that mocking can never provide."
+  },
+]} />
