@@ -10,6 +10,7 @@ status: complete
 
 import CmdTable from '../../../components/astro/CmdTable.astro';
 import Tip from '../../../components/astro/Tip.astro';
+import CodeTabs from '../../../components/astro/CodeTabs.astro';
 
 ## Locator priority
 
@@ -46,3 +47,52 @@ more specific role/name.
 1. Log in using only `getByRole` and `getByLabel` locators.
 2. Add the first inventory item to the cart without using CSS selectors.
 3. Find a locator that matches two elements and fix it with `filter()`.
+
+## One flow, three layers
+
+<CodeTabs labels={['login.spec.ts', 'login.page.ts', 'playwright.config.ts']}>
+  <Fragment slot="tab-0">
+
+```ts
+import { test, expect } from '@playwright/test';
+import { LoginPage } from './login.page';
+
+test('standard user can log in', async ({ page }) => {
+  const login = new LoginPage(page);
+  await login.goto();
+  await login.signIn('standard_user', 'secret_sauce');
+  await expect(page.getByText('Products')).toBeVisible();
+});
+```
+
+  </Fragment>
+  <Fragment slot="tab-1">
+
+```ts
+import type { Page } from '@playwright/test';
+
+export class LoginPage {
+  constructor(private page: Page) {}
+  async goto() { await this.page.goto('https://www.saucedemo.com'); }
+  async signIn(user: string, pass: string) {
+    await this.page.getByPlaceholder('Username').fill(user);
+    await this.page.getByPlaceholder('Password').fill(pass);
+    await this.page.getByRole('button', { name: 'Login' }).click();
+  }
+}
+```
+
+  </Fragment>
+  <Fragment slot="tab-2">
+
+```ts
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  use: { baseURL: 'https://www.saucedemo.com', trace: 'on-first-retry' },
+  retries: process.env.CI ? 2 : 0,
+});
+```
+
+  </Fragment>
+</CodeTabs>

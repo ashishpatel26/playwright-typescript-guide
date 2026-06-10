@@ -1,0 +1,36 @@
+---
+interface Props { labels: string[]; }
+const { labels } = Astro.props;
+const uid = Math.random().toString(36).slice(2, 8);
+const panels = await Promise.all(labels.map((_, i) => Astro.slots.render(`tab-${i}`)));
+---
+<div class="codetabs" data-codetabs={uid}>
+  <div class="ct-bar" role="tablist">
+    {labels.map((l, i) => (
+      <button class:list={['ct-tab', { on: i === 0 }]} role="tab" aria-selected={i === 0 ? 'true' : 'false'} data-tab={i}>{l}</button>
+    ))}
+  </div>
+  {panels.map((html, i) => (
+    <div class:list={['ct-panel', { on: i === 0 }]} role="tabpanel" data-panel={i} set:html={html} />
+  ))}
+</div>
+<script>
+  document.querySelectorAll('[data-codetabs]').forEach((root) => {
+    root.querySelectorAll<HTMLButtonElement>('.ct-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const i = btn.dataset.tab;
+        root.querySelectorAll('.ct-tab').forEach(b => { b.classList.toggle('on', b === btn); b.setAttribute('aria-selected', String(b === btn)); });
+        root.querySelectorAll<HTMLElement>('.ct-panel').forEach(p => p.classList.toggle('on', p.dataset.panel === i));
+      });
+    });
+  });
+</script>
+<style>
+.codetabs { margin: 18px 0; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.ct-bar { display: flex; gap: 0; background: var(--panel2); border-bottom: 1px solid var(--line); }
+.ct-tab { font-family: var(--mono); font-size: 12.5px; color: var(--muted); background: transparent; border: 0; padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent; }
+.ct-tab.on { color: var(--code-accent); border-bottom-color: var(--ember); }
+.ct-panel { display: none; }
+.ct-panel.on { display: block; }
+.ct-panel :global(pre) { border: 0; border-radius: 0; margin: 0; }
+</style>
