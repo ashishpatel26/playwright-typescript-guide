@@ -1,0 +1,35 @@
+---
+title: Locators
+level: 2
+order: 1
+description: getByRole, getByText, CSS, XPath, test IDs — and which to choose for tests that survive refactors.
+practiceSite: { name: SauceDemo, url: "https://www.saucedemo.com" }
+duration: 40 min
+status: complete
+---
+
+## Locator priority
+
+Playwright's guidance, in order: `getByRole` → `getByLabel` → `getByText` →
+`getByTestId` → CSS → XPath. Role-based locators assert accessibility for free
+and survive markup refactors.
+
+```ts
+// Resilient: tied to user-visible semantics
+await page.getByRole('button', { name: 'Login' }).click();
+
+// Fragile: tied to implementation details
+await page.locator('#root > div > div:nth-child(2) > button').click();
+```
+
+## Strict mode
+
+Every Playwright locator must resolve to exactly one element when actioned.
+Two matches throw — by design. Disambiguate with `filter()`, `nth()`, or a
+more specific role/name.
+
+## Practice on SauceDemo
+
+1. Log in using only `getByRole` and `getByLabel` locators.
+2. Add the first inventory item to the cart without using CSS selectors.
+3. Find a locator that matches two elements and fix it with `filter()`.
