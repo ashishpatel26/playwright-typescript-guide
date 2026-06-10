@@ -6,7 +6,7 @@ import { tokens } from '../../theme/tokens';
 // ── Testing Pyramid ──────────────────────────────────────────────────────────
 function TestingPyramid() {
   return (
-    <svg viewBox="0 0 520 260" style={{ width: '100%', maxWidth: 520, display: 'block', margin: '0 auto' }}>
+    <svg viewBox="0 0 520 260" role="img" aria-label="Testing pyramid: E2E (few, slow) at top; Integration (some, medium) in middle; Unit (many, fast, cheap) at base" style={{ width: '100%', maxWidth: 520, display: 'block', margin: '0 auto' }}>
       {/* E2E — top */}
       <polygon points="260,18 330,100 190,100" fill={tokens.ember} opacity="0.92" />
       <text x="260" y="65" textAnchor="middle" fill="#fff" fontSize="13" fontWeight="700">E2E</text>
@@ -42,7 +42,7 @@ function BrowserHierarchy() {
   ];
   const edges = [[0,1],[0,2],[1,3],[1,4],[2,5]] as const;
   return (
-    <svg viewBox="0 0 520 260" style={{ width: '100%', maxWidth: 520, display: 'block', margin: '0 auto' }}>
+    <svg viewBox="0 0 520 260" role="img" aria-label="Browser hierarchy: Browser contains two BrowserContexts, each containing Pages. Contexts are isolated." style={{ width: '100%', maxWidth: 520, display: 'block', margin: '0 auto' }}>
       {edges.map(([p, c], i) => {
         const px = nodes[p].x + BOX_W / 2;
         const py = nodes[p].y + BOX_H;
@@ -81,7 +81,7 @@ function RetryTimeline() {
     { x: 460, label: 'PASS',      sub: 'element found',  color: tokens.green,   icon: '✓' },
   ];
   return (
-    <svg viewBox="0 0 520 120" style={{ width: '100%', maxWidth: 520, display: 'block', margin: '0 auto' }}>
+    <svg viewBox="0 0 520 120" role="img" aria-label="Retry timeline: Attempt 1 runs, fails with timeout, waits 500ms, Attempt 2 runs, passes." style={{ width: '100%', maxWidth: 520, display: 'block', margin: '0 auto' }}>
       <line x1="40" y1="55" x2="490" y2="55" stroke={tokens.line} strokeWidth="2" />
       <polygon points="490,50 500,55 490,60" fill={tokens.line} />
       {events.map((e, i) => (
