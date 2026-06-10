@@ -49,7 +49,7 @@ function QuizCardInner({ storageKey, questions }: QuizCardInnerProps) {
         </Typography>
         <LinearProgress
           variant="determinate"
-          value={(done / questions.length) * 100}
+          value={questions.length ? (done / questions.length) * 100 : 0}
           sx={{
             flex: 1, height: 4, borderRadius: 2,
             bgcolor: 'divider',
@@ -60,7 +60,7 @@ function QuizCardInner({ storageKey, questions }: QuizCardInnerProps) {
 
       {questions.map((item, i) => (
         <Card key={i} sx={{ mb: 1.5 }}>
-          <CardContent sx={{ pb: '12px !important' }}>
+          <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 2 }}>
               <Typography sx={{ fontWeight: 600, lineHeight: 1.5, flex: 1 }}>
                 {item.q}
@@ -85,7 +85,7 @@ function QuizCardInner({ storageKey, questions }: QuizCardInnerProps) {
                     <Chip
                       label="Senior answer"
                       size="small"
-                      sx={{ mb: 0.75, bgcolor: 'primary.main', color: '#0C1018', fontWeight: 700 }}
+                      sx={{ mb: 0.75, bgcolor: 'primary.main', color: 'primary.contrastText', fontWeight: 700 }}
                     />
                     <Typography sx={{ fontSize: '0.85rem', color: 'text.secondary', fontStyle: 'italic', lineHeight: 1.65 }}>
                       {item.senior}
