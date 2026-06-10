@@ -50,6 +50,8 @@ function TsPlaygroundInner({ starter, height = 260, label = 'TypeScript Playgrou
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
+      // Only accept messages from our own sandbox iframe
+      if (e.source !== iframeRef.current?.contentWindow) return;
       if (e.data?.type === 'output') {
         setOutput(prev => [...prev, { kind: e.data.kind, text: e.data.text }]);
       } else if (e.data?.type === 'done') {
@@ -72,9 +74,10 @@ function TsPlaygroundInner({ starter, height = 260, label = 'TypeScript Playgrou
       const model = editor.getModel();
       if (!model) { setRunning(false); return; }
 
+      const uriStr = model.uri.toString();
       const getWorker = await monaco.languages.typescript.getTypeScriptWorker();
       const client = await getWorker(model.uri);
-      const emit = await client.getEmitOutput(model.uri.toString());
+      const emit = await client.getEmitOutput(uriStr);
       const js = emit.outputFiles[0]?.text ?? '';
 
       if (!js.trim()) {
