@@ -10,4 +10,9 @@ export default defineConfig({
   markdown: {
     shikiConfig: { theme: 'github-dark-default' },
   },
+  vite: {
+    ssr: {
+      noExternal: [/@mui\//, /@emotion\//],
+    },
+  },
 });
