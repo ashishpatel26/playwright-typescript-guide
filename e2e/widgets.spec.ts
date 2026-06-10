@@ -12,7 +12,8 @@ test.describe('Widget smoke tests', () => {
 
   test('ConceptDiagram renders on testing-pyramid', async ({ page }) => {
     await page.goto(`${BASE}/levels/level-00/testing-pyramid/`);
-    await expect(page.locator('svg').first()).toBeVisible({ timeout: 10000 });
+    // ConceptDiagram testing-pyramid SVG contains labelled text nodes
+    await expect(page.locator('svg[aria-label*="Testing pyramid"]')).toBeVisible({ timeout: 10000 });
   });
 
   test('TsPlayground renders on locators page', async ({ page }) => {
@@ -22,8 +23,8 @@ test.describe('Widget smoke tests', () => {
 
   test('LocatorLab renders on locators page', async ({ page }) => {
     await page.goto(`${BASE}/levels/level-02/locators/`);
-    // LocatorLab has an iframe pointing at login.html
-    await expect(page.frameLocator('iframe[title="practice page"]').locator('body')).toBeAttached({ timeout: 10000 });
+    // LocatorLab iframe shows login.html — verify the username field is present
+    await expect(page.frameLocator('iframe[title="practice page"]').locator('[data-testid="username"]')).toBeVisible({ timeout: 10000 });
   });
 
   test('PwRunner renders on locators page', async ({ page }) => {
