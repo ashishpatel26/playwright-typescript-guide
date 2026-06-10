@@ -5,7 +5,10 @@ order: 1
 description: Software fails in expensive ways. Testing is the engineering discipline that finds failure before users do.
 duration: 20 min
 status: complete
+widgets: ['quiz']
 ---
+
+import QuizCard from '../../../components/react/QuizCard';
 
 ## The cost of a bug
 
@@ -25,3 +28,28 @@ expected behavior under known conditions.
 Every topic in this handbook ends with how it fails in production. Start
 building that reflex now: for every feature you ever test, ask *"what is the
 most expensive way this could break?"*
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="why-testing-exists" questions={[
+  {
+    q: "Why does finding a bug earlier cost less than finding it later?",
+    a: "Early detection is orders of magnitude cheaper. A code-review catch takes minutes to fix; a production incident adds rollback time, incident calls, hotfix cycle, and customer impact. The 'cost of change curve' is exponential — every step from dev to test to staging to production multiplies the fix cost.",
+    senior: "At Staff level, frame this as risk management: you're buying options. A unit test at $0.01 buys the option to catch a class of failure for free forever. Skipping it is selling that option for zero premium — pure expected-value destruction."
+  },
+  {
+    q: "What is the difference between testing and QA?",
+    a: "Testing is a technical activity: writing and running checks against code. QA (Quality Assurance) is a process discipline: defining quality standards, reviewing processes, and preventing defects from entering the system. Automation engineers own testing; QA engineers own quality processes.",
+    senior: "In high-functioning orgs, QA shifts left until it's indistinguishable from engineering. The distinction matters when debugging org failures: a team with excellent automated tests but no QA process will still ship defects through broken CI, bad branching strategy, or insufficient staging environments."
+  },
+  {
+    q: "Can a test suite prove software is correct?",
+    a: "No. Tests provide evidence of expected behavior under known conditions. They cannot cover all possible inputs, states, or interactions. A green suite means 'no known bugs in tested paths' — not 'no bugs'.",
+    senior: "This matters when stakeholders conflate 100% pass rate with 0% bug rate. The practical implication: invest in property-based testing and fuzzing for critical paths (auth, data transforms, financial calculations) where combinatorial coverage is impossible with example-based tests."
+  },
+  {
+    q: "What is flakiness and why is it worse than a failing test?",
+    a: "A flaky test sometimes passes and sometimes fails for reasons unrelated to the code under test (timing, network, test pollution). A consistently failing test is a clear signal. A flaky test erodes trust in the entire suite — once engineers start re-running tests to make them pass, the suite loses its signal value.",
+    senior: "Track flakiness rate per test as a first-class metric. Above 1% failure rate per run, a test is costing more than it detects. Options: fix the non-determinism, quarantine it, or delete it. Quarantine is often right — the test captures a real behavior but has a flawed implementation."
+  },
+]} />
