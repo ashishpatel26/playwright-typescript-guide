@@ -8,6 +8,9 @@ duration: 40 min
 status: complete
 ---
 
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+
 ## Locator priority
 
 Playwright's guidance, in order: `getByRole` → `getByLabel` → `getByText` →
@@ -21,6 +24,16 @@ await page.getByRole('button', { name: 'Login' }).click();
 // Fragile: tied to implementation details
 await page.locator('#root > div > div:nth-child(2) > button').click();
 ```
+
+<CmdTable rows={[
+  { c: "page.getByRole('button', { name: 'Login' })", d: 'Accessible role + name. First choice.' },
+  { c: "page.getByLabel('Username')", d: 'Form fields by their label.' },
+  { c: "page.getByText('Welcome back')", d: 'Visible text. Good for non-interactive elements.' },
+  { c: "page.getByTestId('cart-badge')", d: 'Stable hook when semantics are unavailable.' },
+  { c: "page.locator('.btn-primary')", d: 'CSS. Last resort — couples test to styling.' },
+]} />
+
+<Tip>Role-based locators double as accessibility checks — if <code>getByRole</code> cannot find your button, neither can a screen reader.</Tip>
 
 ## Strict mode
 
