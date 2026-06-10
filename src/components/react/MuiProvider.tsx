@@ -34,7 +34,7 @@ const theme = createTheme({
     MuiButton: {
       defaultProps: { disableElevation: true },
       styleOverrides: {
-        containedPrimary: { color: '#0C1018', fontWeight: 700 },
+        containedPrimary: { color: tokens.bg, fontWeight: 700 },
       },
     },
     MuiChip: {
