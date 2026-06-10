@@ -1,0 +1,24 @@
+---
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : import.meta.env.BASE_URL + '/';
+---
+<nav class="nav">
+  <div class="nav-in">
+    <a class="logo" href={base}>pw<b>·handbook</b></a>
+    <div class="nav-links">
+      <a href={`${base}#levels`}>Levels</a>
+      <a href={`${base}#domains`}>Domain Projects</a>
+      <a href={`${base}#capstones`}>Capstones</a>
+      <a href={`${base}search/`}>Search</a>
+      <a href="https://github.com/ashishpatel26/playwright-typescript-guide" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+<style>
+.nav { position: sticky; top: 0; z-index: 50; background: #0c1018e6; backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.nav-in { max-width: 1200px; margin: 0 auto; padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 58px; }
+.logo { font-family: var(--mono); font-weight: 600; font-size: 15px; color: var(--ink); text-decoration: none; white-space: nowrap; }
+.logo b { color: var(--ember); }
+.nav-links { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.nav-links a { font-family: var(--mono); font-size: 12.5px; color: var(--muted); text-decoration: none; padding: 6px 10px; border-radius: 8px; white-space: nowrap; }
+.nav-links a:hover, .nav-links a:focus-visible { color: var(--ink); background: var(--panel); }
+</style>
