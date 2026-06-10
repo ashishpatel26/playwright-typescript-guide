@@ -1,0 +1,81 @@
+---
+import Base from '../layouts/Base.astro';
+import { levels } from '../data/levels';
+import { getCollection } from 'astro:content';
+
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : import.meta.env.BASE_URL + '/';
+const allTopics = await getCollection('topics', t => t.data.status === 'complete');
+const topicCount = (n: number) => allTopics.filter(t => t.data.level === n).length;
+const totalHours = levels.reduce((s, l) => s + l.hours, 0);
+---
+<Base title="Learn production-grade Playwright">
+  <header class="hero">
+    <div class="wrap">
+      <span class="hero-pill"><i></i>15 levels · {totalHours}+ hours · real demo apps</span>
+      <h1>Playwright engineering, <em>the production way.</em></h1>
+      <p class="lede">
+        Not another tutorial. A complete roadmap from testing fundamentals to Staff-QE-level
+        framework architecture — every topic practiced on real applications, with failure
+        scenarios and interview questions built in.
+      </p>
+      <a class="cta" href={`${base}levels/0/`}>Start Level 0</a>
+      <a class="cta ghost" href="#levels">Browse the roadmap</a>
+    </div>
+  </header>
+
+  <section id="levels">
+    <div class="wrap">
+      <div class="eyebrow">the roadmap <span>/ 15 levels</span></div>
+      <h2>From fundamentals to leadership</h2>
+      <div class="level-grid">
+        {levels.map(l => (
+          <a class="level-card" href={`${base}levels/${l.num}/`}>
+            <span class="lnum">L{String(l.num).padStart(2, '0')}</span>
+            <h3>{l.title}</h3>
+            <p>{l.description}</p>
+            <span class="lmeta">{topicCount(l.num)} topics · ~{l.hours}h</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section id="domains">
+    <div class="wrap">
+      <div class="eyebrow">apply it <span>/ 16 domain projects</span></div>
+      <h2>Real domains, real test strategies</h2>
+      <p class="lede">E-commerce, banking, healthcare, fintech and 12 more — each with feature
+      test matrices and production failure scenarios. Coming as content waves land.</p>
+    </div>
+  </section>
+
+  <section id="capstones">
+    <div class="wrap">
+      <div class="eyebrow">prove it <span>/ 5 capstones</span></div>
+      <h2>Portfolio-grade capstone frameworks</h2>
+      <p class="lede">Five end-to-end frameworks — from a Magento e-commerce suite to an
+      AI-powered QE platform. Coming as content waves land.</p>
+    </div>
+  </section>
+</Base>
+
+<style>
+.hero { padding: 88px 0 64px; border-bottom: 1px solid var(--line); }
+.hero h1 { font-size: clamp(40px, 6vw, 68px); font-weight: 800; line-height: 1.02; letter-spacing: -.02em; margin: 18px 0; max-width: 800px; }
+.hero h1 em { font-style: normal; color: var(--ember); }
+.hero .lede { font-size: 18px; margin-bottom: 28px; }
+.hero-pill { display: inline-flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 5px 12px; }
+.hero-pill i { width: 7px; height: 7px; border-radius: 99px; background: var(--c-green); display: inline-block; }
+.cta { display: inline-block; font-family: var(--mono); font-size: 14px; font-weight: 600; color: #0C1018; background: var(--ember); padding: 13px 22px; border-radius: 10px; text-decoration: none; margin-right: 10px; }
+.cta:hover { background: var(--ember-soft); }
+.cta.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+section { padding: 72px 0; border-bottom: 1px solid var(--line); }
+.level-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 28px; }
+.level-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 22px; text-decoration: none; color: var(--ink); display: block; transition: border-color .15s; }
+.level-card:hover { border-color: var(--ember); }
+.level-card .lnum { font-family: var(--mono); font-size: 12px; color: var(--ember); }
+.level-card h3 { margin: 8px 0 6px; font-size: 18px; }
+.level-card p { font-size: 13.5px; color: var(--muted); }
+.level-card .lmeta { display: block; margin-top: 12px; font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+@media (max-width: 920px) { .level-grid { grid-template-columns: 1fr; } }
+</style>

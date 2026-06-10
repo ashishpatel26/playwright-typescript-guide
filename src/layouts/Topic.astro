@@ -1,0 +1,76 @@
+---
+import Base from './Base.astro';
+import { levelByNum } from '../data/levels';
+import type { MarkdownHeading } from 'astro';
+
+interface SidebarItem { title: string; slug: string; order: number; }
+interface NavRef { title: string; href: string; }
+interface Props {
+  title: string;
+  description: string;
+  level: number;
+  headings: MarkdownHeading[];
+  sidebar: SidebarItem[];
+  currentSlug: string;
+  prev?: NavRef;
+  next?: NavRef;
+  practiceSite?: { name: string; url: string };
+}
+const { title, description, level, headings, sidebar, currentSlug, prev, next, practiceSite } = Astro.props;
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : import.meta.env.BASE_URL + '/';
+const meta = levelByNum(level)!;
+const h2s = headings.filter(h => h.depth === 2);
+---
+<Base title={title} description={description}>
+  <div class="wrap docs">
+    <aside class="sidebar">
+      <a class="side-level" href={`${base}levels/${level}/`}>L{String(level).padStart(2, '0')} · {meta.title}</a>
+      <nav>
+        {sidebar.map(s => (
+          <a class:list={['side-link', { on: s.slug === currentSlug }]} href={`${base}levels/${level}/${s.slug}/`}>{s.title}</a>
+        ))}
+      </nav>
+    </aside>
+
+    <article data-pagefind-body>
+      <div class="eyebrow">level {String(level).padStart(2, '0')} <span>/ {currentSlug}</span></div>
+      <h1>{title}</h1>
+      <p class="lede">{description}</p>
+      {practiceSite && (
+        <p class="practice">practice site: <a href={practiceSite.url} rel="noopener">{practiceSite.name}</a></p>
+      )}
+      <slot />
+      <nav class="pn">
+        {prev ? <a class="pn-link" href={prev.href}>← {prev.title}</a> : <span />}
+        {next ? <a class="pn-link next" href={next.href}>{next.title} →</a> : <span />}
+      </nav>
+    </article>
+
+    <aside class="toc">
+      {h2s.length > 0 && <><div class="toc-title">On this page</div>
+      {h2s.map(h => <a href={`#${h.slug}`}>{h.text}</a>)}</>}
+    </aside>
+  </div>
+</Base>
+
+<style>
+.docs { display: grid; grid-template-columns: 220px minmax(0, 1fr) 180px; gap: 40px; padding-top: 48px; }
+.sidebar { position: sticky; top: 80px; align-self: start; }
+.side-level { display: block; font-family: var(--mono); font-size: 12px; color: var(--ember); text-decoration: none; margin-bottom: 14px; }
+.side-link { display: block; font-size: 13.5px; color: var(--muted); text-decoration: none; padding: 5px 10px; border-left: 2px solid var(--line); }
+.side-link:hover { color: var(--ink); }
+.side-link.on { color: var(--ink); border-left-color: var(--ember); }
+article h1 { font-size: clamp(30px, 4vw, 44px); font-weight: 800; margin-bottom: 12px; }
+article :global(h2) { font-size: 24px; margin: 40px 0 12px; }
+article :global(p) { max-width: 720px; margin-bottom: 12px; }
+article :global(pre) { margin: 16px 0; }
+article :global(ol), article :global(ul) { padding-left: 24px; margin-bottom: 12px; }
+.practice { font-family: var(--mono); font-size: 13px; color: var(--faint); margin-bottom: 8px; }
+.toc { position: sticky; top: 80px; align-self: start; font-size: 12.5px; }
+.toc-title { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--faint); margin-bottom: 8px; }
+.toc a { display: block; color: var(--muted); text-decoration: none; padding: 3px 0; }
+.toc a:hover { color: var(--ink); }
+.pn { display: flex; justify-content: space-between; margin-top: 56px; border-top: 1px solid var(--line); padding-top: 20px; }
+.pn-link { font-family: var(--mono); font-size: 13px; color: var(--c-blue); text-decoration: none; }
+@media (max-width: 1020px) { .docs { grid-template-columns: 1fr; } .sidebar, .toc { position: static; } }
+</style>

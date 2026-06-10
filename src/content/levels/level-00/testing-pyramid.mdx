@@ -1,0 +1,24 @@
+---
+title: Testing Pyramid
+level: 0
+order: 2
+description: Unit tests at the base, E2E at the peak — and why inverting the pyramid produces unmaintainable suites.
+duration: 25 min
+status: complete
+---
+
+## The shape
+
+Many fast, cheap unit tests at the bottom. Fewer integration tests in the
+middle. A thin layer of end-to-end tests at the top.
+
+## Why E2E is the peak, not the base
+
+E2E tests are the most realistic and the most expensive: slowest to run,
+hardest to debug, most prone to flakiness. A suite of 5,000 E2E tests and no
+unit tests is an inverted pyramid — an ice cream cone — and it melts in CI.
+
+## Where Playwright fits
+
+Playwright lives at the top two layers. Your job as an automation engineer is
+to keep that top layer thin, fast, and trustworthy.

@@ -1,0 +1,13 @@
+---
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : import.meta.env.BASE_URL + '/';
+---
+<footer>
+  <div class="wrap">
+    pw<b style="color:var(--ember)">·handbook</b> — production-grade Playwright engineering, level by level.<br />
+    <a href={base}>Home</a> · <a href="https://playwright.dev" rel="noopener">Playwright Docs</a> · MIT License
+  </div>
+</footer>
+<style>
+footer { padding: 48px 0 80px; color: var(--faint); font-family: var(--mono); font-size: 13px; border-top: 1px solid var(--line); margin-top: 72px; }
+footer a { color: var(--muted); }
+</style>

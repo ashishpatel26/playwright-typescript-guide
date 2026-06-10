@@ -1,0 +1,98 @@
+---
+title: Locators
+level: 2
+order: 1
+description: getByRole, getByText, CSS, XPath, test IDs — and which to choose for tests that survive refactors.
+practiceSite: { name: SauceDemo, url: "https://www.saucedemo.com" }
+duration: 40 min
+status: complete
+---
+
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import CodeTabs from '../../../components/astro/CodeTabs.astro';
+
+## Locator priority
+
+Playwright's guidance, in order: `getByRole` → `getByLabel` → `getByText` →
+`getByTestId` → CSS → XPath. Role-based locators assert accessibility for free
+and survive markup refactors.
+
+```ts
+// Resilient: tied to user-visible semantics
+await page.getByRole('button', { name: 'Login' }).click();
+
+// Fragile: tied to implementation details
+await page.locator('#root > div > div:nth-child(2) > button').click();
+```
+
+<CmdTable rows={[
+  { c: "page.getByRole('button', { name: 'Login' })", d: 'Accessible role + name. First choice.' },
+  { c: "page.getByLabel('Username')", d: 'Form fields by their label.' },
+  { c: "page.getByText('Welcome back')", d: 'Visible text. Good for non-interactive elements.' },
+  { c: "page.getByTestId('cart-badge')", d: 'Stable hook when semantics are unavailable.' },
+  { c: "page.locator('.btn-primary')", d: 'CSS. Last resort — couples test to styling.' },
+]} />
+
+<Tip>Role-based locators double as accessibility checks — if <code>getByRole</code> cannot find your button, neither can a screen reader.</Tip>
+
+## Strict mode
+
+Every Playwright locator must resolve to exactly one element when actioned.
+Two matches throw — by design. Disambiguate with `filter()`, `nth()`, or a
+more specific role/name.
+
+## Practice on SauceDemo
+
+1. Log in using only `getByRole` and `getByLabel` locators.
+2. Add the first inventory item to the cart without using CSS selectors.
+3. Find a locator that matches two elements and fix it with `filter()`.
+
+## One flow, three layers
+
+<CodeTabs labels={['login.spec.ts', 'login.page.ts', 'playwright.config.ts']}>
+  <Fragment slot="tab-0">
+
+```ts
+import { test, expect } from '@playwright/test';
+import { LoginPage } from './login.page';
+
+test('standard user can log in', async ({ page }) => {
+  const login = new LoginPage(page);
+  await login.goto();
+  await login.signIn('standard_user', 'secret_sauce');
+  await expect(page.getByText('Products')).toBeVisible();
+});
+```
+
+  </Fragment>
+  <Fragment slot="tab-1">
+
+```ts
+import type { Page } from '@playwright/test';
+
+export class LoginPage {
+  constructor(private page: Page) {}
+  async goto() { await this.page.goto('https://www.saucedemo.com'); }
+  async signIn(user: string, pass: string) {
+    await this.page.getByPlaceholder('Username').fill(user);
+    await this.page.getByPlaceholder('Password').fill(pass);
+    await this.page.getByRole('button', { name: 'Login' }).click();
+  }
+}
+```
+
+  </Fragment>
+  <Fragment slot="tab-2">
+
+```ts
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  use: { baseURL: 'https://www.saucedemo.com', trace: 'on-first-retry' },
+  retries: process.env.CI ? 2 : 0,
+});
+```
+
+  </Fragment>
+</CodeTabs>
