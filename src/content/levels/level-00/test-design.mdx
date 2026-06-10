@@ -1,0 +1,136 @@
+---
+title: Test Design Techniques
+level: 0
+order: 5
+description: BVA, equivalence partitioning, and decision tables — the systematic techniques that turn requirements into a minimal, complete set of test cases.
+duration: 30 min
+status: complete
+widgets: ['quiz']
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+import Tip from '../../../components/astro/Tip.astro';
+
+## Why technique matters
+
+Untrained testers test what they think will pass. Trained testers use
+systematic techniques to find the cases that will fail. Test design is the
+difference between a test suite that proves you tested a lot and one that
+proves your software works correctly.
+
+## Boundary Value Analysis (BVA)
+
+Most bugs live at boundaries. If a system accepts ages 18–65, bugs typically
+appear at 17, 18, 65, 66 — not at 35.
+
+**BVA rule:** test at the boundary, one below, and one above.
+
+| Input | Value | Expected |
+|-------|-------|----------|
+| Min boundary | 18 | Accept |
+| Below min | 17 | Reject |
+| Above min | 19 | Accept |
+| Max boundary | 65 | Accept |
+| Above max | 66 | Reject |
+| Below max | 64 | Accept |
+
+```ts
+// BVA test cases for an age validation function
+test.each([
+  [17, false],  // below min
+  [18, true],   // min boundary
+  [19, true],   // above min
+  [64, true],   // below max
+  [65, true],   // max boundary
+  [66, false],  // above max
+])('age %i → isValid: %s', async (age, expected) => {
+  await page.locator('[data-testid="age-input"]').fill(String(age));
+  await page.locator('[data-testid="submit"]').click();
+  const valid = await page.locator('[data-testid="error"]').isHidden();
+  expect(valid).toBe(expected);
+});
+```
+
+## Equivalence Partitioning (EP)
+
+Group inputs into partitions where every value in the partition behaves the
+same. Test one representative value from each partition instead of testing
+every possible input.
+
+**Example — password validation:** minimum 8 chars, must contain a digit.
+
+| Partition | Example | Expected |
+|-----------|---------|----------|
+| Valid | `Secret1!` | Accept |
+| Too short | `Sec1!` | Reject — too short |
+| No digit | `SecretABC!` | Reject — no digit |
+| Empty | `` | Reject — required |
+
+Testing `Secret1!` covers the entire valid partition — no need to test
+`Password2!` or `Mypass9@` separately.
+
+<Tip>BVA and EP are complementary. EP divides the input space into partitions; BVA tests the edges of each partition. Use both together for thorough input coverage.</Tip>
+
+## Decision Tables
+
+When multiple conditions combine to determine an outcome, a decision table
+ensures you test every combination systematically.
+
+**Example — discount eligibility:** a user gets a discount if they have a
+loyalty card AND have spent over £100, OR if they are a new user.
+
+| Loyalty card | Spend > £100 | New user | Discount? |
+|:---:|:---:|:---:|:---:|
+| ✓ | ✓ | ✗ | Yes |
+| ✓ | ✗ | ✗ | No |
+| ✗ | ✓ | ✗ | No |
+| ✗ | ✗ | ✓ | Yes |
+| ✓ | ✓ | ✓ | Yes |
+
+A decision table forces you to enumerate all combinations. It commonly
+reveals business logic bugs that neither manual exploration nor individual
+condition testing would find.
+
+```ts
+// Decision table as Playwright test.each
+test.each([
+  [true,  true,  false, true],   // loyalty + spend = discount
+  [true,  false, false, false],  // loyalty, no spend, not new = no discount
+  [false, true,  false, false],  // no loyalty, spend = no discount
+  [false, false, true,  true],   // new user = discount
+])('loyalty:%s spend>100:%s newUser:%s → discount:%s', async (loyalty, spend, newUser, expected) => {
+  // set up user state and navigate to checkout
+  // assert discount badge visible/hidden
+  expect(expected).toBeDefined(); // replace with real assertion
+});
+```
+
+## Applying the techniques to Playwright
+
+| Scenario | Technique |
+|---|---|
+| Login form: valid/invalid username lengths | BVA |
+| Credit card number field: empty/valid/too long/non-numeric | EP |
+| Checkout flow: logged-in × cart-not-empty × payment method | Decision table |
+| Age gate: 17/18/19 | BVA |
+| Search results: 0 / 1 / many results | EP + BVA |
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="test-design" questions={[
+  {
+    q: "What is boundary value analysis and why does it find more bugs than random input testing?",
+    a: "BVA tests at boundary conditions (the exact limit, one below, one above) because most input validation bugs are off-by-one errors at the boundary. Random testing is unlikely to hit exactly 17, 18, 19 — BVA guarantees it.",
+    senior: "At scale, BVA combines with property-based testing (e.g. fast-check). Instead of manually writing boundary cases, you define the property and the framework explores the boundary space systematically. For Playwright: BVA is for human-designed cases; property-based testing is for algorithmic exhaustion of input domains."
+  },
+  {
+    q: "What is equivalence partitioning and how does it reduce test case count?",
+    a: "EP groups inputs where all values produce the same behaviour — valid inputs form one partition, each type of invalid input forms another. Testing one value per partition is equivalent to testing all values in it, so EP reduces N test cases to a small number of representative cases without losing coverage.",
+    senior: "The risk with EP is incorrect partition boundaries — assuming all values in a range behave identically when they don't. Always combine EP with BVA to test partition edges, and use exploratory testing to challenge partition assumptions. EP sets minimum coverage; BVA and exploration find what EP misses."
+  },
+  {
+    q: "When would you use a decision table instead of BVA or EP?",
+    a: "When the output depends on multiple conditions in combination. A discount rule that depends on loyalty status AND spend amount AND new-user status has interaction effects that BVA and EP cannot model — they test one dimension at a time. A decision table enumerates every combination and reveals logic bugs in the interaction.",
+    senior: "Decision tables map directly to test.each parametrized tests in Playwright. The table IS the test specification. For complex business rules (pricing engines, eligibility calculators, approval workflows), building the decision table is the design activity — automation fills in the assertions."
+  },
+]} />
