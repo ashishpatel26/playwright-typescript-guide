@@ -1,0 +1,161 @@
+---
+title: Variables & Types
+level: 1
+order: 1
+description: TypeScript's type system from the ground up — primitives, inference, unions, and the annotations that make automation code self-documenting.
+duration: 25 min
+status: complete
+widgets: ['ts-playground', 'quiz']
+---
+
+import TsPlayground from '../../../components/react/TsPlayground';
+import QuizCard from '../../../components/react/QuizCard';
+import Tip from '../../../components/astro/Tip.astro';
+
+## Why TypeScript for Playwright?
+
+Playwright's own type definitions are TypeScript. Every page object, fixture,
+and config file benefits from types: autocomplete, compile-time errors before
+your test runner even starts, and self-documenting method signatures. Learning
+TypeScript for Playwright is not optional — it is the foundation.
+
+## Variable declarations
+
+```ts
+// const — immutable binding (use for almost everything)
+const baseURL = 'https://www.saucedemo.com';
+
+// let — reassignable (use for counters, state that changes)
+let retryCount = 0;
+retryCount = 3;
+
+// var — function-scoped, hoisted. Never use in modern code.
+```
+
+Rule: default to `const`. Use `let` only when the variable must be
+reassigned. Never use `var`.
+
+## Primitive types
+
+```ts
+const username: string = 'standard_user';
+const timeout: number = 30_000;       // ms; underscore separator is valid
+const headless: boolean = true;
+const handle: null = null;            // intentional absence of value
+let page: undefined;                  // declared but not yet assigned
+
+// TypeScript infers the type from the value — annotations are optional:
+const url = 'https://example.com';    // inferred: string
+const retries = 3;                    // inferred: number
+```
+
+<Tip>Always prefer inference over explicit annotations when the type is obvious from the value. Explicit annotations add noise without adding information.</Tip>
+
+## Union types
+
+A variable that can be one of several types:
+
+```ts
+// Status can only be one of these strings
+type TestStatus = 'pass' | 'fail' | 'skip';
+
+const result: TestStatus = 'pass';  // OK
+// const bad: TestStatus = 'retry'; // Error: not assignable
+
+// Union with primitives
+type Timeout = number | 'default';
+const t1: Timeout = 5000;
+const t2: Timeout = 'default';
+
+// Null-safe union (common pattern with DOM queries)
+const element: HTMLElement | null = document.getElementById('submit');
+if (element !== null) {
+  element.click(); // TypeScript knows it's HTMLElement here
+}
+```
+
+## Literal types
+
+```ts
+// String literal — only this exact value
+type Environment = 'staging' | 'production' | 'local';
+
+// Numeric literal
+type HttpStatus = 200 | 201 | 400 | 401 | 404 | 500;
+
+// Const assertion — infer the narrowest type
+const config = {
+  baseURL: 'https://saucedemo.com',
+  timeout: 30_000,
+} as const;
+
+// config.baseURL is 'https://saucedemo.com' (literal), not string
+```
+
+## Type assertions
+
+```ts
+// Tell TypeScript "I know more than you do"
+const input = document.getElementById('username') as HTMLInputElement;
+input.value = 'standard_user'; // OK — HTMLInputElement has .value
+
+// Non-null assertion — you know it won't be null at runtime
+const btn = document.getElementById('login-btn')!;
+btn.click();
+```
+
+<Tip>Type assertions bypass TypeScript's checks. Use them sparingly and only when you have information the type system cannot infer — not to silence errors you don't understand.</Tip>
+
+## Try it: types in action
+
+<TsPlayground
+  client:only="react"
+  label="Variables & Types — Playground"
+  height={320}
+  starter={`// TypeScript type inference and union types
+const username: string = 'standard_user';
+const timeout: number = 30_000;
+const headless: boolean = true;
+
+type TestStatus = 'pass' | 'fail' | 'skip';
+const results: TestStatus[] = ['pass', 'fail', 'pass', 'skip'];
+
+const passed = results.filter(r => r === 'pass').length;
+const failed = results.filter(r => r === 'fail').length;
+
+console.log('Username:', username);
+console.log('Timeout:', timeout, 'ms');
+console.log('Headless:', headless);
+console.log('Results:', results.join(', '));
+console.log('Passed:', passed, '/ Failed:', failed);
+
+// Type narrowing
+type Timeout = number | 'default';
+function resolveTimeout(t: Timeout): number {
+  if (t === 'default') return 30_000;
+  return t;
+}
+console.log('Resolved:', resolveTimeout('default'), 'ms');
+console.log('Resolved:', resolveTimeout(5_000), 'ms');
+`}
+/>
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="ts-variables-types" questions={[
+  {
+    q: "What is the difference between const and let in TypeScript?",
+    a: "const creates an immutable binding — the variable cannot be reassigned. let creates a mutable binding. Both are block-scoped. const does not make objects immutable (properties can still change); it only prevents reassignment of the binding itself.",
+    senior: "Defaulting to const is a code readability signal: a const variable won't change value in this scope, which makes code easier to reason about. For objects you want deeply immutable, combine const with Object.freeze() or use as const assertion."
+  },
+  {
+    q: "What is a union type and when would you use one in a Playwright project?",
+    a: "A union type allows a variable to hold one of several types (e.g. string | null, 'pass' | 'fail' | 'skip'). In Playwright projects: test status types, environment names, browser names ('chromium' | 'firefox' | 'webkit'), and optional configuration values that can be a value or undefined.",
+    senior: "Union types combined with type narrowing (if/switch/in checks) are the TypeScript equivalent of algebraic data types. For complex Playwright fixtures that vary by environment or browser, a discriminated union with a string literal discriminant gives you exhaustiveness checking — the compiler will warn if you miss a case."
+  },
+  {
+    q: "What is type inference and when should you use explicit type annotations instead?",
+    a: "TypeScript infers the type from the assigned value — const url = 'https://...' is inferred as string without an annotation. Use explicit annotations when: the type cannot be inferred (function parameters, unassigned variables), when the inferred type is too broad, or when documenting public APIs.",
+    senior: "Over-annotating is a common TypeScript anti-pattern. If the type is obvious from the right-hand side, omit the annotation — it adds visual noise without adding safety. The places where annotations earn their keep: function signatures (parameters and return types), class property declarations, and any place where the inferred type is wrong or too wide."
+  },
+]} />
