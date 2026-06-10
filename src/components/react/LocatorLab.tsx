@@ -49,12 +49,19 @@ function LocatorLabInner({ page = 'login.html', height = 400 }: LocatorLabProps)
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
+      // Only accept messages from our own practice-page iframe
+      if (e.source !== iframeRef.current?.contentWindow) return;
       if (e.data?.type !== 'pw-result') return;
       setCount(typeof e.data.count === 'number' ? e.data.count : null);
       setQueryError(e.data.error ?? null);
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
+  }, []);
+
+  // Clear pending debounce on unmount
+  useEffect(() => () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
   }, []);
 
   const sendQuery = useCallback((k: LocatorKind, v: string, n: string) => {
