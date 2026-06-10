@@ -1,0 +1,44 @@
+---
+import { getCollection, render } from 'astro:content';
+import Topic from '../../../layouts/Topic.astro';
+
+export async function getStaticPaths() {
+  const topics = await getCollection('topics', t => t.data.status === 'complete');
+  return topics.map(t => ({
+    params: {
+      level: String(t.data.level),
+      topic: t.id.split('/').pop()!.replace(/\.mdx$/, ''),
+    },
+    props: { entry: t },
+  }));
+}
+
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : import.meta.env.BASE_URL + '/';
+const { entry } = Astro.props;
+const { Content, headings } = await render(entry);
+
+const siblings = (await getCollection('topics',
+  t => t.data.level === entry.data.level && t.data.status === 'complete'))
+  .sort((a, b) => a.data.order - b.data.order);
+
+const slugOf = (id: string) => id.split('/').pop()!.replace(/\.mdx$/, '');
+const sidebar = siblings.map(s => ({ title: s.data.title, slug: slugOf(s.id), order: s.data.order }));
+const idx = siblings.findIndex(s => s.id === entry.id);
+const toRef = (s: typeof siblings[number]) =>
+  ({ title: s.data.title, href: `${base}levels/${s.data.level}/${slugOf(s.id)}/` });
+const prev = idx > 0 ? toRef(siblings[idx - 1]) : undefined;
+const next = idx < siblings.length - 1 ? toRef(siblings[idx + 1]) : undefined;
+---
+<Topic
+  title={entry.data.title}
+  description={entry.data.description}
+  level={entry.data.level}
+  headings={headings}
+  sidebar={sidebar}
+  currentSlug={slugOf(entry.id)}
+  prev={prev}
+  next={next}
+  practiceSite={entry.data.practiceSite}
+>
+  <Content />
+</Topic>
