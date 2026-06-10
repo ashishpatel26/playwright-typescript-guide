@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Practice — File Upload</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #111; color: #e8edf5; font-family: system-ui,sans-serif; padding: 32px; }
+    h1 { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
+    .dropzone { border: 2px dashed #202b3d; border-radius: 12px; padding: 40px; text-align: center; color: #8a96a8; transition: border-color .2s; cursor: pointer; }
+    .dropzone.over { border-color: #f05133; background: rgba(240,81,51,0.06); }
+    .dropzone p { margin-top: 8px; font-size: 13px; }
+    label[for="file-input"] { display: inline-block; margin-top: 14px; padding: 8px 18px; background: #f05133; color: #0c1018; border-radius: 8px; font-weight: 700; cursor: pointer; }
+    #file-input { display: none; }
+    #file-list { margin-top: 20px; }
+    .file-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #121927; border: 1px solid #202b3d; border-radius: 8px; margin-bottom: 8px; font-size: 13px; }
+    .file-name { font-weight: 600; flex: 1; }
+    .file-size { color: #8a96a8; }
+    .remove-btn { border: none; background: none; color: #8a96a8; cursor: pointer; font-size: 16px; }
+    .remove-btn:hover { color: #f05133; }
+  </style>
+</head>
+<body>
+  <h1>File Upload</h1>
+  <div class="dropzone" id="dropzone" role="region" aria-label="File drop area">
+    <div style="font-size:32px">📁</div>
+    <p>Drag and drop files here</p>
+    <label for="file-input">Choose files</label>
+    <input type="file" id="file-input" data-testid="file-input" multiple />
+  </div>
+  <div id="file-list" data-testid="file-list"></div>
+
+  <script src="pw-query.js"></script>
+  <script>
+    var dz = document.getElementById('dropzone');
+    var fi = document.getElementById('file-input');
+    var fl = document.getElementById('file-list');
+
+    function addFiles(files) {
+      Array.from(files).forEach(function (f) {
+        var item = document.createElement('div');
+        item.className = 'file-item';
+        item.setAttribute('data-testid', 'file-item');
+        var kb = (f.size / 1024).toFixed(1);
+        item.innerHTML = '<span class="file-name">' + f.name + '</span>' +
+          '<span class="file-size">' + kb + ' KB</span>' +
+          '<button class="remove-btn" aria-label="Remove ' + f.name + '">✕</button>';
+        item.querySelector('.remove-btn').addEventListener('click', function () { item.remove(); });
+        fl.appendChild(item);
+      });
+    }
+
+    fi.addEventListener('change', function () { addFiles(fi.files); });
+
+    dz.addEventListener('dragover', function (e) { e.preventDefault(); dz.classList.add('over'); });
+    dz.addEventListener('dragleave', function () { dz.classList.remove('over'); });
+    dz.addEventListener('drop', function (e) {
+      e.preventDefault();
+      dz.classList.remove('over');
+      addFiles(e.dataTransfer.files);
+    });
+  </script>
+</body>
+</html>

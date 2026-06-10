@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Swag Labs — Practice Login</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #ededed; font-family: system-ui,sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .login-box { background: #fff; border-radius: 4px; width: 320px; padding: 32px 28px; box-shadow: 0 2px 12px #0002; }
+    .logo { text-align: center; font-size: 24px; font-weight: 900; color: #e2231a; letter-spacing: -.5px; margin-bottom: 24px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    input { width: 100%; border: 1px solid #ccc; border-radius: 3px; padding: 10px 12px; font-size: 15px; margin-bottom: 14px; }
+    input:focus { outline: 2px solid #e2231a; }
+    .login-btn { width: 100%; background: #e2231a; color: #fff; border: none; border-radius: 3px; padding: 12px; font-size: 15px; font-weight: 700; cursor: pointer; letter-spacing: .5px; }
+    .login-btn:hover { background: #c01c14; }
+    .error { color: #e2231a; font-size: 13px; margin-bottom: 12px; display: none; }
+    .inventory { display: none; }
+    .inventory h2 { font-size: 20px; font-weight: 800; margin-bottom: 16px; }
+    .products { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .product { border: 1px solid #ddd; border-radius: 4px; padding: 12px; font-size: 13px; }
+    .product-name { font-weight: 700; margin-bottom: 4px; }
+    .product-price { color: #e2231a; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div>
+    <div class="login-box" data-page="login">
+      <div class="logo">Swag Labs</div>
+      <p class="error" data-error aria-live="polite"></p>
+      <label for="username">Username</label>
+      <input id="username" type="text" placeholder="Username" data-testid="username" autocomplete="off" />
+      <label for="password">Password</label>
+      <input id="password" type="password" placeholder="Password" data-testid="password" />
+      <button class="login-btn" id="login-btn" data-testid="login-button">Login</button>
+    </div>
+    <div class="inventory" data-page="inventory">
+      <h2>Products</h2>
+      <div class="products">
+        <div class="product"><div class="product-name">Sauce Labs Backpack</div><div class="product-price">$29.99</div></div>
+        <div class="product"><div class="product-name">Sauce Labs Bike Light</div><div class="product-price">$9.99</div></div>
+        <div class="product"><div class="product-name">Sauce Labs Bolt T-Shirt</div><div class="product-price">$15.99</div></div>
+        <div class="product"><div class="product-name">Sauce Labs Fleece Jacket</div><div class="product-price">$49.99</div></div>
+      </div>
+    </div>
+  </div>
+  <script src="pw-query.js"></script>
+  <script src="pw-runner.js"></script>
+  <script>
+    document.getElementById('login-btn').addEventListener('click', function () {
+      var u = document.getElementById('username').value;
+      var p = document.getElementById('password').value;
+      var err = document.querySelector('[data-error]');
+      if (u === 'standard_user' && p === 'secret_sauce') {
+        document.querySelector('[data-page="login"]').style.display = 'none';
+        document.querySelector('[data-page="inventory"]').style.display = 'block';
+      } else if (!u || !p) {
+        err.textContent = u ? 'Password is required' : 'Username is required';
+        err.style.display = 'block';
+      } else {
+        err.textContent = 'Username and password do not match any user in this service.';
+        err.style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>

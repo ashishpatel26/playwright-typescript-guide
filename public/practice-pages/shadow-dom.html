@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Practice — Shadow DOM</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #111; color: #e8edf5; font-family: system-ui,sans-serif; padding: 32px; }
+    h1 { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
+    .card { background: #121927; border: 1px solid #202b3d; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    p.note { color: #8a96a8; font-size: 13px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Shadow DOM Practice</h1>
+
+  <div class="card">
+    <p>Regular DOM button (easy to select):</p>
+    <button id="regular-btn" style="margin-top:10px;padding:8px 16px;background:#f05133;color:#0c1018;border:none;border-radius:8px;font-weight:700;cursor:pointer">
+      Regular Button
+    </button>
+  </div>
+
+  <div class="card">
+    <p>Shadow DOM button (inside shadow root — harder):</p>
+    <div id="shadow-host-1"></div>
+    <p class="note">Playwright's locators pierce shadow DOM by default. CSS selectors do NOT pierce by default.</p>
+  </div>
+
+  <div class="card">
+    <p>Nested shadow DOM (two levels deep):</p>
+    <div id="shadow-host-2"></div>
+  </div>
+
+  <script src="pw-query.js"></script>
+  <script>
+    var host1 = document.getElementById('shadow-host-1');
+    var root1 = host1.attachShadow({ mode: 'open' });
+    root1.innerHTML = '<style>button{padding:8px 16px;background:#a5a0ff;color:#0c1018;border:none;border-radius:8px;font-weight:700;cursor:pointer}</style>' +
+      '<button data-testid="shadow-btn">Shadow Button</button>';
+
+    var host2 = document.getElementById('shadow-host-2');
+    var root2 = host2.attachShadow({ mode: 'open' });
+    root2.innerHTML = '<div id="inner-host"></div>';
+    var innerHost = root2.getElementById('inner-host');
+    var root3 = innerHost.attachShadow({ mode: 'open' });
+    root3.innerHTML = '<style>span{color:#7ee787;font-weight:600}</style><span>Nested shadow text</span>';
+  </script>
+</body>
+</html>

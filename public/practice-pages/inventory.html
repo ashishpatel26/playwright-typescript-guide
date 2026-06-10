@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Practice — Inventory Table</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #111; color: #e8edf5; font-family: system-ui,sans-serif; padding: 24px; }
+    h1 { font-size: 20px; font-weight: 700; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { background: #1e2636; text-align: left; padding: 10px 14px; font-weight: 600; color: #8a96a8; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+    td { padding: 10px 14px; border-bottom: 1px solid #202b3d; }
+    tr:hover td { background: #1a2030; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .badge-pass { background: #1a3a2a; color: #7ee787; }
+    .badge-fail { background: #3a1a1a; color: #ff7b5c; }
+    .badge-skip { background: #2a2a1a; color: #ffb454; }
+    button { padding: 4px 12px; border: 1px solid #202b3d; background: #121927; color: #e8edf5; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    button:hover { border-color: #f05133; }
+    #add-row { margin-top: 12px; padding: 8px 16px; background: #f05133; color: #0c1018; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Test Results</h1>
+  <table id="results-table">
+    <thead>
+      <tr>
+        <th>Test Name</th>
+        <th>Status</th>
+        <th>Duration</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td data-testid="test-name-1">should log in with valid credentials</td>
+        <td><span class="badge badge-pass" role="status">PASS</span></td>
+        <td>1.2s</td>
+        <td><button>View trace</button></td>
+      </tr>
+      <tr>
+        <td data-testid="test-name-2">should show error for invalid password</td>
+        <td><span class="badge badge-pass" role="status">PASS</span></td>
+        <td>0.8s</td>
+        <td><button>View trace</button></td>
+      </tr>
+      <tr>
+        <td data-testid="test-name-3">should add item to cart</td>
+        <td><span class="badge badge-fail" role="status">FAIL</span></td>
+        <td>3.1s</td>
+        <td><button>View trace</button></td>
+      </tr>
+      <tr>
+        <td data-testid="test-name-4">should complete checkout flow</td>
+        <td><span class="badge badge-skip" role="status">SKIP</span></td>
+        <td>—</td>
+        <td><button>View trace</button></td>
+      </tr>
+    </tbody>
+  </table>
+  <button id="add-row">Add row</button>
+  <script src="pw-query.js"></script>
+  <script>
+    var count = 5;
+    document.getElementById('add-row').addEventListener('click', function () {
+      var tbody = document.querySelector('#results-table tbody');
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td data-testid="test-name-' + count + '">test case #' + count + '</td>' +
+        '<td><span class="badge badge-pass" role="status">PASS</span></td>' +
+        '<td>0.' + Math.floor(Math.random() * 9 + 1) + 's</td>' +
+        '<td><button>View trace</button></td>';
+      tbody.appendChild(tr);
+      count++;
+    });
+  </script>
+</body>
+</html>
