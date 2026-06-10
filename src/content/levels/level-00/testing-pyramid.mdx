@@ -5,9 +5,15 @@ order: 2
 description: Unit tests at the base, E2E at the peak — and why inverting the pyramid produces unmaintainable suites.
 duration: 25 min
 status: complete
+widgets: ['diagram', 'quiz']
 ---
 
+import ConceptDiagram from '../../../components/react/ConceptDiagram';
+import QuizCard from '../../../components/react/QuizCard';
+
 ## The shape
+
+<ConceptDiagram client:only="react" type="testing-pyramid" />
 
 Many fast, cheap unit tests at the bottom. Fewer integration tests in the
 middle. A thin layer of end-to-end tests at the top.
@@ -22,3 +28,29 @@ unit tests is an inverted pyramid — an ice cream cone — and it melts in CI.
 
 Playwright lives at the top two layers. Your job as an automation engineer is
 to keep that top layer thin, fast, and trustworthy.
+
+## The Playwright philosophy
+
+Playwright's design choices reflect the pyramid:
+- **Parallel by default** — E2E is slow; parallelism is the only scalable answer.
+- **Auto-wait** — E2E deals with async UIs; polling beats sleeps.
+- **Isolation** — BrowserContext gives each test its own cookies and storage without spawning a new browser process.
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="testing-pyramid" questions={[
+  {
+    q: "What is the testing pyramid and why does it matter for test suite design?",
+    a: "Unit tests at the base (many, fast, isolated), integration tests in the middle, E2E at the peak (few, slow, full-stack). It matters because cost per test increases with scope — a suite heavy on E2E is slow, flaky, and expensive to maintain.",
+    senior: "At Staff level the pyramid is a budget model: you're allocating confidence budget across test types. The question isn't 'how many E2E' but 'what confidence do I need and what's the cheapest way to get it?' Sometimes a single E2E test replaces 20 integration tests and is worth the cost; sometimes a unit test with a mock provides the same confidence for 1/100th the cost."
+  },
+  {
+    q: "What is the 'ice cream cone' antipattern?",
+    a: "An inverted pyramid: mostly E2E tests, few integration, almost no unit tests. It produces slow CI, high flakiness, hard-to-debug failures, and a team that spends more time managing the test suite than shipping features.",
+    senior: "Ice cream cones usually emerge from organisations that outsource QA to a separate team — the dev team doesn't write tests, so the QA team adds E2E because it's the only thing they can add without access to the codebase. The fix is organisational: embed QA in engineering teams and measure unit/integration coverage per squad."
+  },
+  {
+    q: "How does Playwright's BrowserContext support test pyramid discipline?",
+    a: "BrowserContext provides test isolation (clean cookies, storage, auth) without spawning a new browser binary, making the per-test cost low enough to run hundreds of E2E tests in reasonable time. Without isolation, tests pollute each other and you need fewer, coarser tests."
+  },
+]} />

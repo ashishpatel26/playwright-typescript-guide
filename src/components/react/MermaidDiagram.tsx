@@ -1,0 +1,93 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { Box, CircularProgress } from '@mui/material';
+import { MuiProvider } from './MuiProvider';
+import { tokens } from '../../theme/tokens';
+
+let mermaidInitialized = false;
+
+async function getMermaid() {
+  const mermaid = (await import('mermaid')).default;
+  if (!mermaidInitialized) {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: tokens.bg,
+        mainBkg: tokens.panel,
+        nodeBorder: tokens.line,
+        lineColor: tokens.muted,
+        primaryColor: tokens.panel,
+        primaryBorderColor: tokens.ember,
+        primaryTextColor: tokens.ink,
+        secondaryColor: tokens.panel2,
+        tertiaryColor: tokens.panel2,
+        fontSize: '14px',
+      },
+    });
+    mermaidInitialized = true;
+  }
+  return mermaid;
+}
+
+export interface MermaidDiagramProps {
+  chart: string;
+}
+
+function MermaidDiagramInner({ chart }: MermaidDiagramProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Unique id per render — mermaid requires it
+    const id = 'mmd-' + Math.random().toString(36).slice(2, 9);
+    getMermaid().then(async (mermaid) => {
+      if (cancelled) return;
+      try {
+        const { svg } = await mermaid.render(id, chart);
+        if (!cancelled && ref.current) {
+          ref.current.innerHTML = svg;
+          setLoading(false);
+        }
+      } catch (err: unknown) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+          setLoading(false);
+        }
+      }
+    });
+    return () => { cancelled = true; };
+  }, [chart]);
+
+  if (error) {
+    return (
+      <Box sx={{ p: 2, color: 'error.main', fontFamily: '"IBM Plex Mono",monospace', fontSize: 13, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
+        Mermaid error: {error}
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ position: 'relative', py: 2, textAlign: 'center' }}>
+      {loading && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+          <CircularProgress size={24} color="primary" />
+        </Box>
+      )}
+      <Box
+        ref={ref}
+        sx={{ display: loading ? 'none' : 'block', '& svg': { maxWidth: '100%', height: 'auto' } }}
+      />
+    </Box>
+  );
+}
+
+export default function MermaidDiagram(props: MermaidDiagramProps) {
+  return (
+    <MuiProvider>
+      <MermaidDiagramInner {...props} />
+    </MuiProvider>
+  );
+}
