@@ -1,0 +1,173 @@
+---
+title: "Responsive Breakpoint Testing"
+level: 17
+order: 2
+description: "Test responsive layouts across breakpoints — visibility rules, layout shifts, and overflow detection."
+duration: "20 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## What Responsive Tests Verify
+
+Responsive tests check that the layout adapts correctly across screen sizes:
+
+- Elements hidden/shown at correct breakpoints (mobile menu vs nav bar)
+- No horizontal scroll at any breakpoint
+- Content doesn't overflow its container
+- Images resize correctly (no distortion, no overflow)
+- Touch targets are large enough (WCAG: min 44×44 CSS px)
+
+## Testing Visibility at Breakpoints
+
+```ts
+import { test, expect } from '@playwright/test';
+
+test.describe('Navigation', () => {
+  test('desktop shows nav links, hides hamburger', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/');
+
+    await expect(page.getByRole('navigation').getByRole('link')).toHaveCount(5);
+    await expect(page.getByRole('button', { name: 'Menu' })).not.toBeVisible();
+  });
+
+  test('mobile shows hamburger, hides nav links', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto('/');
+
+    await expect(page.getByRole('button', { name: 'Menu' })).toBeVisible();
+    // Nav links hidden until menu opens
+    await expect(page.getByRole('navigation').getByRole('link').first()).not.toBeVisible();
+  });
+});
+```
+
+## Testing for Horizontal Overflow
+
+Horizontal scrollbars on mobile are a common layout bug. Detect programmatically:
+
+```ts
+test('no horizontal overflow at mobile viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto('/');
+
+  // document.documentElement.scrollWidth > viewport width = horizontal overflow
+  const hasHorizontalOverflow = await page.evaluate(() => {
+    return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+  });
+
+  expect(hasHorizontalOverflow).toBe(false);
+});
+
+// Check every page in your route list
+const ROUTES = ['/', '/products', '/checkout', '/about'];
+
+for (const route of ROUTES) {
+  test(`no overflow on ${route} at 375px`, async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto(route);
+    await page.waitForLoadState('networkidle');
+
+    const overflow = await page.evaluate(() =>
+      document.documentElement.scrollWidth > document.documentElement.clientWidth
+    );
+    expect(overflow, `Horizontal overflow on ${route}`).toBe(false);
+  });
+}
+```
+
+## Testing Touch Target Size
+
+WCAG 2.5.5 (Level AAA) and 2.5.8 (Level AA in WCAG 2.2) require minimum touch target sizes:
+
+```ts
+test('interactive elements have adequate touch targets', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto('/');
+
+  const interactiveElements = page.locator('button, a, [role="button"], input, select');
+  const count = await interactiveElements.count();
+
+  const violations: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const el = interactiveElements.nth(i);
+    const box = await el.boundingBox();
+    if (!box) continue;
+
+    // WCAG 2.5.8: 24×24 minimum, 44×44 recommended
+    if (box.width < 24 || box.height < 24) {
+      const text = await el.textContent();
+      violations.push(`"${text?.trim()}" ${Math.round(box.width)}×${Math.round(box.height)}px`);
+    }
+  }
+
+  expect(violations, `Touch targets too small:\n${violations.join('\n')}`).toEqual([]);
+});
+```
+
+## Testing Image Responsiveness
+
+```ts
+test('images do not overflow their containers', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto('/products');
+
+  const images = page.locator('img');
+  const count = await images.count();
+
+  for (let i = 0; i < count; i++) {
+    const img = images.nth(i);
+    const imgBox = await img.boundingBox();
+    const parentBox = await img.evaluate(el => el.parentElement?.getBoundingClientRect());
+
+    if (imgBox && parentBox) {
+      expect(imgBox.width).toBeLessThanOrEqual(parentBox.width + 1); // +1 for rounding
+    }
+  }
+});
+```
+
+## Parameterised Breakpoint Tests
+
+```ts
+// Test a behaviour at multiple breakpoints in one spec
+const breakpoints = [
+  { name: 'mobile', width: 375 },
+  { name: 'tablet', width: 768 },
+  { name: 'desktop', width: 1280 },
+] as const;
+
+for (const { name, width } of breakpoints) {
+  test(`footer layout at ${name} (${width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto('/');
+
+    const footer = page.locator('footer');
+    await expect(footer).toBeVisible();
+
+    // Footer columns stack on mobile, row on desktop
+    const columns = footer.locator('.footer-column');
+    const firstBox = await columns.first().boundingBox();
+    const secondBox = await columns.nth(1).boundingBox();
+
+    if (width < 768) {
+      // Stacked: second column below first
+      expect(secondBox!.y).toBeGreaterThan(firstBox!.y + firstBox!.height - 10);
+    } else {
+      // Side by side: same vertical position
+      expect(Math.abs(secondBox!.y - firstBox!.y)).toBeLessThan(10);
+    }
+  });
+}
+```
+
+<QuizCard client:only="react" storageKey="mobile-responsive" questions={[
+  { q: "How do you programmatically detect horizontal overflow on a page in Playwright?", a: "Use `page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)`. If true, content is wider than the viewport, causing a horizontal scrollbar. Check at the target mobile viewport size (e.g., 375px) after `waitForLoadState('networkidle')` to ensure all content is rendered." },
+  { q: "What is the WCAG minimum touch target size and which criterion defines it?", a: "WCAG 2.5.8 (Level AA, WCAG 2.2): minimum 24×24 CSS pixels. The recommended size is 44×44 CSS pixels (WCAG 2.5.5, Level AAA). Targets smaller than 24×24 are non-compliant. Test using `element.boundingBox()` on all buttons, links, and interactive elements at mobile viewport." },
+  { q: "Why loop breakpoint tests with parameterised data rather than writing separate test functions?", a: "DRY: same assertion logic, different viewport. A parameterised loop scales — add a new breakpoint without adding a new test function. The test name includes breakpoint info for clear failure messages. Results show which specific breakpoint failed." },
+  { q: "A test passes on desktop but fails at 375px with 'element not visible'. What are the three most likely causes?", a: "1) CSS `display: none` or `visibility: hidden` at mobile breakpoint (intentional responsive behaviour — test is checking the wrong thing). 2) Element overflows off-screen due to a layout bug (horizontal overflow). 3) Element is hidden behind another element (z-index or overlap bug at narrow widths)." }
+]} />

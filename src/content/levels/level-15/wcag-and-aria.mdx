@@ -1,0 +1,120 @@
+---
+title: "WCAG & ARIA Fundamentals"
+level: 15
+order: 1
+description: "Understand WCAG 2.1/2.2 success criteria, ARIA roles and properties, and how they map to testable assertions."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Why Accessibility Testing Matters
+
+Accessibility (a11y) testing verifies that people with disabilities can use your application. It's also a legal requirement in many jurisdictions (ADA in the US, EAA in Europe).
+
+For automation engineers, a11y testing is another layer of the test pyramid — one that's cheap to automate and catches real user-impacting defects.
+
+## WCAG 2.1 / 2.2 Overview
+
+WCAG (Web Content Accessibility Guidelines) organises requirements into four principles:
+
+| Principle | Meaning | Example |
+|---|---|---|
+| **Perceivable** | Content can be perceived by all users | Alt text on images, captions on video |
+| **Operable** | UI can be operated with keyboard, voice, switch | Focus visible, no keyboard traps |
+| **Understandable** | Content and UI are clear | Consistent navigation, error suggestions |
+| **Robust** | Works with assistive technologies | Valid HTML, correct ARIA roles |
+
+### Conformance Levels
+
+- **Level A** — minimum, must satisfy
+- **Level AA** — standard requirement (most laws require this)
+- **Level AAA** — enhanced, aspirational
+
+Most compliance targets: **WCAG 2.1 Level AA**.
+
+## ARIA Roles
+
+ARIA (Accessible Rich Internet Applications) adds semantic meaning to HTML elements that lack it natively.
+
+```html
+<!-- Native semantic HTML (preferred) -->
+<button>Submit</button>
+<nav>...</nav>
+<main>...</main>
+
+<!-- ARIA when native is not possible -->
+<div role="button" tabindex="0" aria-label="Close dialog">×</div>
+<div role="navigation" aria-label="Main navigation">...</div>
+
+<!-- ARIA state and properties -->
+<button aria-expanded="false" aria-controls="menu-items">Menu</button>
+<input aria-invalid="true" aria-describedby="email-error" />
+<div id="email-error" role="alert">Email is required</div>
+```
+
+### Common ARIA Roles
+
+| Role | When to use |
+|---|---|
+| `button` | Interactive element that isn't a `<button>` |
+| `alert` | Dynamic error or status message |
+| `dialog` | Modal overlay |
+| `navigation` | Nav landmark |
+| `region` | Significant section with a label |
+| `combobox` | Custom dropdown/autocomplete |
+| `progressbar` | Loading or progress indicator |
+
+## ARIA Properties and States
+
+```html
+<!-- Properties (static semantic information) -->
+aria-label="Search products"         <!-- accessible name when no visible text -->
+aria-labelledby="heading-id"         <!-- points to visible label -->
+aria-describedby="hint-id"           <!-- additional description -->
+aria-required="true"                 <!-- field is required -->
+
+<!-- States (dynamic, changes with user interaction) -->
+aria-expanded="true|false"           <!-- open/closed state -->
+aria-selected="true|false"           <!-- selection state -->
+aria-checked="true|false|mixed"      <!-- checkbox/toggle state -->
+aria-disabled="true"                 <!-- non-interactive state -->
+aria-hidden="true"                   <!-- hide from AT, keep visible -->
+aria-live="polite|assertive"         <!-- announce dynamic content -->
+```
+
+## First Rule of ARIA
+
+> **If you can use a native HTML element with the semantics you need, do so instead of adding ARIA.**
+
+```html
+<!-- ❌ Avoid -->
+<div role="button" tabindex="0" onclick="submit()">Submit</div>
+
+<!-- ✅ Prefer -->
+<button type="submit">Submit</button>
+```
+
+Native HTML elements have built-in keyboard support, focus management, and browser/AT integration. ARIA adds semantics but not behaviour.
+
+## Testable WCAG Criteria (for automation)
+
+| Criterion | Level | Automated test |
+|---|---|---|
+| 1.1.1 Non-text content | A | All `<img>` have meaningful `alt` |
+| 1.3.1 Info and relationships | A | Lists use `<ul>/<ol>`, tables have `<th>` |
+| 2.1.1 Keyboard | A | All features operable without mouse |
+| 2.4.3 Focus order | A | Focus moves in logical sequence |
+| 2.4.7 Focus visible | AA | Focused elements have visible outline |
+| 3.3.1 Error identification | A | Errors identify the field and describe the issue |
+| 4.1.2 Name, role, value | A | All UI components have accessible name + correct role |
+
+<QuizCard client:only="react" storageKey="a11y-wcag" questions={[
+  { q: "What does WCAG stand for and what are its four core principles?", a: "Web Content Accessibility Guidelines. Four principles (POUR): Perceivable (content perceptible to all senses), Operable (UI usable by keyboard/switch), Understandable (clear content and navigation), Robust (works with assistive technologies like screen readers)." },
+  { q: "What is the difference between ARIA `role`, `aria-label`, and `aria-expanded`?", a: "role defines what an element IS (button, dialog, alert). aria-label provides an accessible name when there is no visible text label. aria-expanded is a state that changes dynamically (true/false) to communicate open/closed status to assistive technologies." },
+  { q: "Why should you prefer native HTML elements over ARIA roles?", a: "Native elements (button, nav, input) have built-in keyboard support, focus management, and browser/AT integration. ARIA adds semantics only — no behaviour. A div with role=button does NOT receive keyboard events automatically; you must add tabindex, keydown handlers, and more manually." },
+  { q: "What WCAG level do most accessibility laws (ADA, EAA) require?", a: "WCAG 2.1 Level AA. Level A is the minimum floor; Level AAA is aspirational. Most compliance mandates target AA, which includes criteria like colour contrast 4.5:1, visible focus, keyboard accessibility, and error identification." }
+]} />

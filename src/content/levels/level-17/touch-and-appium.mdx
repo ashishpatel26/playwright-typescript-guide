@@ -1,0 +1,172 @@
+---
+title: "Touch Gestures & Appium Basics"
+level: 17
+order: 3
+description: "Test swipe, pinch, and scroll gestures with Playwright, and understand when to reach for Appium for native mobile testing."
+duration: "25 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Touch Events in Playwright
+
+Playwright with `isMobile: true` (or a mobile device preset) enables touch event simulation. Use `tap()` for single touches, `touchscreen` API for gestures.
+
+```ts
+import { test, expect, devices } from '@playwright/test';
+
+test.use({ ...devices['iPhone 15'] });
+
+// Single tap
+test('product tappable on mobile', async ({ page }) => {
+  await page.goto('/products');
+  await page.locator('.product-card').first().tap();
+  await expect(page).toHaveURL(/\/product\//);
+});
+
+// Long press (tap and hold)
+test('long press shows context menu', async ({ page }) => {
+  await page.goto('/');
+  const item = page.locator('.draggable-item').first();
+  await item.dispatchEvent('pointerdown');
+  await page.waitForTimeout(800);  // hold for 800ms
+  await item.dispatchEvent('pointerup');
+
+  await expect(page.getByRole('menu')).toBeVisible();
+});
+```
+
+## Swipe Gestures
+
+Playwright's `touchscreen.tap()` and mouse drag simulate swipe:
+
+```ts
+// Horizontal swipe (carousel, side menu)
+test('swipe carousel to next slide', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.use({ isMobile: true, hasTouch: true });
+  await page.goto('/gallery');
+
+  const carousel = page.locator('.carousel');
+  const box = await carousel.boundingBox();
+
+  if (!box) throw new Error('Carousel not found');
+
+  // Swipe left: start right of center, end left of center
+  await page.touchscreen.tap(box.x + box.width * 0.8, box.y + box.height / 2);
+  await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2, { steps: 10 });
+  await page.mouse.up();
+
+  await expect(page.locator('.carousel-slide.active')).toHaveAttribute('data-index', '1');
+});
+
+// Vertical scroll (infinite scroll list)
+test('scroll loads more items', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/feed');
+
+  const initialCount = await page.locator('.feed-item').count();
+
+  // Scroll to bottom of page
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await page.waitForResponse(resp => resp.url().includes('/api/feed'));
+
+  const newCount = await page.locator('.feed-item').count();
+  expect(newCount).toBeGreaterThan(initialCount);
+});
+```
+
+## Pull to Refresh
+
+```ts
+test('pull to refresh reloads content', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/dashboard');
+
+  // Pull down gesture from near top of viewport
+  await page.mouse.move(195, 100);
+  await page.mouse.down();
+  await page.mouse.move(195, 350, { steps: 20 });  // drag down 250px
+  await page.mouse.up();
+
+  await expect(page.getByRole('progressbar')).toBeVisible();
+  await expect(page.getByRole('progressbar')).not.toBeVisible({ timeout: 5000 });
+});
+```
+
+## Playwright vs Appium
+
+| Feature | Playwright | Appium |
+|---|---|---|
+| **Target** | Web (in mobile browser) | Native apps + web views |
+| **Setup** | Zero (built-in) | Appium server + driver + device |
+| **Native UI elements** | No | Yes (buttons, pickers, alerts) |
+| **Real device** | Not required | Supported (iOS/Android) |
+| **Emulator** | Browser-level only | Android emulator, iOS simulator |
+| **Performance** | Fast | Slower (WDA/UIAutomator bridge) |
+| **Best for** | Mobile web, PWAs | Native apps, hybrid apps |
+
+## When to Use Appium
+
+Reach for Appium when:
+
+```
+✅ Testing a native iOS or Android app
+✅ Testing hybrid apps (native shell + web views)
+✅ Testing biometric auth (Face ID, fingerprint)
+✅ Testing push notifications
+✅ Testing deep links (custom URL schemes)
+✅ Testing background/foreground app state
+✅ Testing device permissions (camera, contacts)
+```
+
+Playwright is sufficient for:
+
+```
+✅ Mobile web browsers (Chrome on Android, Safari on iOS)
+✅ Progressive Web Apps (PWAs)
+✅ Responsive design validation
+✅ Touch gesture simulation
+```
+
+## Appium Quickstart (for reference)
+
+```ts
+// Install: npm install -D webdriverio @wdio/appium-service
+// Requires: Appium server, Xcode (iOS), Android SDK
+
+import { remote } from 'webdriverio';
+
+const driver = await remote({
+  hostname: 'localhost',
+  port: 4723,
+  capabilities: {
+    platformName: 'Android',
+    'appium:deviceName': 'Pixel 7 Emulator',
+    'appium:app': '/path/to/app.apk',
+    'appium:automationName': 'UiAutomator2',
+  },
+});
+
+// Find native element
+const loginButton = await driver.$('~login-button');  // accessibility ID
+await loginButton.click();
+
+// Or XPath for native
+const emailField = await driver.$('//android.widget.EditText[@text="Email"]');
+await emailField.setValue('test@example.com');
+
+await driver.deleteSession();
+```
+
+<QuizCard client:only="react" storageKey="mobile-touch" questions={[
+  { q: "What is the key difference between Playwright device emulation and Appium for mobile testing?", a: "Playwright emulates mobile browsers in a desktop browser engine — good for mobile web, PWAs, responsive design. Appium drives real native apps (or simulators/emulators) via platform automation (XCUITest for iOS, UIAutomator2 for Android) — required for native app UI, biometrics, push notifications, and native permissions." },
+  { q: "How do you simulate a horizontal swipe gesture in Playwright?", a: "Use `page.mouse.down()` at the start position, `page.mouse.move()` to the end position with `steps` to simulate a smooth drag, then `page.mouse.up()`. Set `isMobile: true` and `hasTouch: true` for touch-aware pages. The `steps` parameter creates intermediate move events for gesture recognition." },
+  { q: "Why might `tap()` behave differently from `click()` on a mobile-emulated page?", a: "tap() fires touch events (touchstart, touchmove, touchend, pointerdown, pointerup) while click() fires mouse events. Some gesture libraries and mobile-specific JavaScript only listen to touch events. Frameworks like React and Vue handle both, but custom interactions or third-party carousels may only respond to touch." },
+  { q: "You're testing a PWA (Progressive Web App). Should you use Playwright or Appium?", a: "Playwright. PWAs run in the mobile browser engine, not as native apps. Playwright device emulation provides the correct viewport, user agent, touch support, and service worker environment. Appium is for native apps and hybrid apps with native shells — it would add complexity without benefit for a pure PWA." }
+]} />

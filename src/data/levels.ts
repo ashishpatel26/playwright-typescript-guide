@@ -22,6 +22,9 @@ export const levels: LevelMeta[] = [
   { num: 12, slug: 'observability',           title: 'Observability',                       description: 'Logs, metrics, traces, OpenTelemetry — debugging failures like a production engineer.', hours: 8 },
   { num: 13, slug: 'ai-test-automation',      title: 'AI in Test Automation',               description: 'MCP, agentic testing, Playwright MCP, self-healing tests, LLM test generation.', hours: 10 },
   { num: 14, slug: 'interview-prep',          title: 'Interview Preparation',               description: 'Framework design, architecture reviews, scalability, and leadership scenarios for SDET to Staff QE.', hours: 12 },
+  { num: 15, slug: 'accessibility-testing',  title: 'Accessibility Testing',               description: 'WCAG, axe-core, Playwright accessibility API, ARIA roles, keyboard navigation, and screen reader testing.', hours: 10 },
+  { num: 16, slug: 'visual-testing',         title: 'Visual Testing',                      description: 'Screenshot comparisons, Percy, Chromatic, Playwright toHaveScreenshot, and visual regression in CI.', hours: 8 },
+  { num: 17, slug: 'mobile-testing',         title: 'Mobile & Responsive Testing',         description: 'Device emulation, viewport strategies, touch events, and Appium fundamentals.', hours: 8 },
 ];
 
 export const levelByNum = (n: number): LevelMeta | undefined => levels.find(l => l.num === n);

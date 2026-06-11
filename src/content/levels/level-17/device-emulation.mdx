@@ -1,0 +1,155 @@
+---
+title: "Device Emulation"
+level: 17
+order: 1
+description: "Use Playwright's built-in device emulation to test mobile viewports, pixel ratios, user agents, and geolocation."
+duration: "25 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## What Device Emulation Does
+
+Playwright can emulate mobile devices at the browser level:
+- Viewport size and pixel ratio
+- User-agent string (browser reports as mobile)
+- Touch event support
+- Geolocation
+- Network throttling
+
+This lets you test responsive layouts and mobile-specific features without a physical device or emulator.
+
+## Built-in Device Descriptors
+
+Playwright ships descriptors for 50+ devices:
+
+```ts
+import { test, devices } from '@playwright/test';
+
+// Use a specific device
+test.use({ ...devices['iPhone 15'] });
+
+test('login works on iPhone 15', async ({ page }) => {
+  await page.goto('/login');
+  await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+});
+```
+
+```ts
+// playwright.config.ts — multi-device projects
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  projects: [
+    { name: 'chromium',      use: { ...devices['Desktop Chrome'] } },
+    { name: 'mobile-safari', use: { ...devices['iPhone 15'] } },
+    { name: 'mobile-chrome', use: { ...devices['Pixel 7'] } },
+    { name: 'tablet',        use: { ...devices['iPad Pro 11'] } },
+  ],
+});
+```
+
+## Checking Available Devices
+
+```ts
+import { devices } from '@playwright/test';
+
+// All available device names
+console.log(Object.keys(devices));
+// → ['iPhone 15', 'iPhone 15 Pro', 'Pixel 7', 'Galaxy S9+', 'iPad Pro 11', ...]
+```
+
+## Custom Viewport Configuration
+
+```ts
+// Custom viewport without a device preset
+test.use({
+  viewport: { width: 390, height: 844 },
+  deviceScaleFactor: 3,
+  isMobile: true,
+  hasTouch: true,
+  userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0...',
+});
+
+// Or override viewport per-test
+test('narrow viewport layout', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.goto('/');
+  await expect(page.locator('.mobile-menu')).toBeVisible();
+});
+```
+
+## Testing Mobile-Specific Behaviour
+
+```ts
+// Test hamburger menu (only visible on mobile)
+test('mobile nav opens on tap', async ({ page }) => {
+  await page.goto('/');
+
+  // Only visible at mobile breakpoint
+  const hamburger = page.getByRole('button', { name: 'Menu' });
+  await expect(hamburger).toBeVisible();
+
+  await hamburger.tap();  // use tap() not click() on mobile
+  await expect(page.getByRole('navigation')).toBeVisible();
+});
+
+// Test geolocation-dependent feature
+test('shows local store based on location', async ({ page, context }) => {
+  await context.setGeolocation({ latitude: 51.5074, longitude: -0.1278 });
+  await context.grantPermissions(['geolocation']);
+
+  await page.goto('/find-store');
+  await page.getByRole('button', { name: 'Use my location' }).tap();
+
+  await expect(page.getByText('London')).toBeVisible();
+});
+```
+
+## Device Descriptor Contents
+
+```ts
+import { devices } from '@playwright/test';
+
+console.log(devices['iPhone 15']);
+// {
+//   userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5...',
+//   viewport: { width: 393, height: 852 },
+//   deviceScaleFactor: 3,
+//   isMobile: true,
+//   hasTouch: true,
+//   defaultBrowserType: 'webkit',
+// }
+```
+
+**`defaultBrowserType`:** iPhone descriptors default to `webkit` (Safari engine). Use `{ ...devices['iPhone 15'], defaultBrowserType: 'chromium' }` to test iPhone viewport on Chrome if needed.
+
+## Responsive Breakpoint Matrix
+
+```ts
+const BREAKPOINTS = [
+  { name: 'mobile-sm', width: 320, height: 568 },
+  { name: 'mobile',    width: 390, height: 844 },
+  { name: 'tablet',    width: 768, height: 1024 },
+  { name: 'desktop',   width: 1280, height: 800 },
+  { name: 'wide',      width: 1920, height: 1080 },
+];
+
+for (const bp of BREAKPOINTS) {
+  test(`layout correct at ${bp.name}`, async ({ page }) => {
+    await page.setViewportSize({ width: bp.width, height: bp.height });
+    await page.goto('/');
+    await expect(page).toHaveScreenshot(`home-${bp.name}.png`);
+  });
+}
+```
+
+<QuizCard client:only="react" storageKey="mobile-devices" questions={[
+  { q: "What does Playwright device emulation actually emulate and what does it NOT emulate?", a: "Emulates: viewport size, pixel density (deviceScaleFactor), user-agent string, touch support, isMobile flag, geolocation. Does NOT emulate: actual mobile CPU performance, native app behaviour, platform-specific browser bugs, battery/network hardware, or the full Safari iOS engine (WebKit on desktop differs from iOS WebKit)." },
+  { q: "Why use `tap()` instead of `click()` in mobile tests?", a: "tap() fires touch events (touchstart, touchend) in addition to pointer events. Some mobile-specific interactions and gesture libraries only respond to touch events. click() fires mouse events which may not trigger touch-specific handlers. When testing with isMobile: true, use tap() for authenticity." },
+  { q: "What is `deviceScaleFactor` and why does it matter for visual testing?", a: "The ratio of physical pixels to CSS pixels (e.g., 3 means a 1×1 CSS pixel = 3×3 physical pixels). High-DPI screens (Retina) use scale factors of 2-3. It matters for visual testing because screenshots are captured at the physical resolution — a 393×852 viewport with scale factor 3 produces a 1179×2556 pixel screenshot." },
+  { q: "How do you test the same feature across 3 device types in Playwright config without duplicating test files?", a: "Define multiple projects in playwright.config.ts with different `use: { ...devices['X'] }` settings. Each project runs the same test files with its device context. No test code duplication — the config layer handles device switching." }
+]} />

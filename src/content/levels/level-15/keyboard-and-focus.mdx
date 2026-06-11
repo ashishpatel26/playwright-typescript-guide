@@ -1,0 +1,182 @@
+---
+title: "Keyboard & Focus Testing"
+level: 15
+order: 3
+description: "Test keyboard navigation, focus order, focus trapping in modals, and skip links with Playwright."
+duration: "25 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Why Keyboard Testing Matters
+
+Keyboard navigation is required by WCAG 2.1.1 (Level A): all functionality must be operable with a keyboard. Users who rely on keyboard include:
+
+- People with motor disabilities using keyboard or switch devices
+- Power users who prefer keyboard over mouse
+- Screen reader users (screen readers are keyboard-driven)
+
+## Playwright Keyboard API
+
+```ts
+// Tab through the page
+await page.keyboard.press('Tab');
+await page.keyboard.press('Shift+Tab');  // reverse direction
+
+// Arrow keys for menus, sliders, radio groups
+await page.keyboard.press('ArrowDown');
+await page.keyboard.press('ArrowRight');
+
+// Activate focused element
+await page.keyboard.press('Enter');
+await page.keyboard.press('Space');
+
+// Close dialogs
+await page.keyboard.press('Escape');
+
+// Type into focused element
+await page.keyboard.type('search query');
+```
+
+## Testing Tab Order
+
+```ts
+test('form fields have logical tab order', async ({ page }) => {
+  await page.goto('/checkout');
+
+  // Start from first focusable element
+  await page.keyboard.press('Tab');
+  await expect(page.getByLabel('First name')).toBeFocused();
+
+  await page.keyboard.press('Tab');
+  await expect(page.getByLabel('Last name')).toBeFocused();
+
+  await page.keyboard.press('Tab');
+  await expect(page.getByLabel('Email')).toBeFocused();
+
+  await page.keyboard.press('Tab');
+  await expect(page.getByLabel('Card number')).toBeFocused();
+});
+```
+
+## Testing Focus Visibility
+
+```ts
+test('focused button has visible outline', async ({ page }) => {
+  await page.goto('/');
+  await page.keyboard.press('Tab');
+
+  const focusedEl = page.locator(':focus');
+  await expect(focusedEl).toBeVisible();
+
+  // Check outline is not 'none' via CSS
+  const outline = await focusedEl.evaluate(el => 
+    getComputedStyle(el).outlineStyle
+  );
+  expect(outline).not.toBe('none');
+});
+```
+
+## Testing Modal Focus Trap
+
+WCAG 2.1 requires that when a dialog opens, focus moves into it and is trapped there until closed (no Tab out of the dialog).
+
+```ts
+test('modal traps focus correctly', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Open dialog' }).click();
+
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+
+  // Focus should be inside dialog
+  const focusedEl = page.locator(':focus');
+  await expect(dialog).toContainText(await focusedEl.textContent() ?? '');
+
+  // Tab through all focusable elements — should wrap inside dialog
+  const focusableCount = await dialog.locator(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  ).count();
+
+  for (let i = 0; i < focusableCount + 1; i++) {
+    await page.keyboard.press('Tab');
+    // Focus should never leave the dialog
+    const focused = page.locator(':focus');
+    await expect(dialog).toContainText(await focused.textContent() ?? '');
+  }
+
+  // Escape closes dialog
+  await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();
+});
+```
+
+## Testing Skip Links
+
+Skip links let keyboard users jump past navigation directly to main content.
+
+```ts
+test('skip link is available and functional', async ({ page }) => {
+  await page.goto('/');
+
+  // Skip link is typically hidden until focused
+  await page.keyboard.press('Tab');
+  const skipLink = page.getByRole('link', { name: /skip to (main )?content/i });
+  await expect(skipLink).toBeVisible();
+
+  // Activating skip link moves focus to main content
+  await page.keyboard.press('Enter');
+  const main = page.locator('main, [role="main"]');
+  await expect(main).toBeFocused();
+});
+```
+
+## Testing Interactive Widgets
+
+```ts
+// Dropdown/combobox keyboard interaction
+test('dropdown opens with keyboard and closes with Escape', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('combobox', { name: 'Country' }).focus();
+  await page.keyboard.press('Space');  // or Enter, depending on implementation
+  await expect(page.getByRole('listbox')).toBeVisible();
+
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');  // select option
+  await expect(page.getByRole('listbox')).not.toBeVisible();
+});
+
+// Radio group keyboard interaction
+test('radio group navigates with arrow keys', async ({ page }) => {
+  await page.goto('/survey');
+  const firstOption = page.getByRole('radio').first();
+  await firstOption.focus();
+
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('radio').nth(1)).toBeFocused();
+});
+```
+
+## Keyboard Testing Checklist
+
+```
+✅ Tab moves forward through all interactive elements
+✅ Shift+Tab moves backward
+✅ Enter/Space activate buttons and links
+✅ Escape closes modals and dropdowns
+✅ Arrow keys work in menus, radio groups, sliders
+✅ Focus is never trapped outside a dialog
+✅ Focus is visible on all focused elements
+✅ Skip links present and functional
+✅ No keyboard traps (can Tab out of any element)
+```
+
+<QuizCard client:only="react" storageKey="a11y-keyboard" questions={[
+  { q: "What WCAG success criterion requires keyboard accessibility and at what level?", a: "WCAG 2.1.1 Keyboard (Level A): all functionality must be operable through a keyboard interface without requiring specific timing for individual keystrokes. This is the foundational accessibility requirement — without it, screen reader users and motor-impaired users cannot use the application." },
+  { q: "What is a focus trap and when is it required vs harmful?", a: "A focus trap keeps keyboard focus inside a container. Required: when a modal dialog is open (WCAG 2.1.2) — Tab must cycle within the dialog so users can't interact with obscured background content. Harmful: a permanent focus trap with no escape key is a keyboard trap (WCAG 2.1.2 violation) — always provide Escape or a close button." },
+  { q: "How do you test that a focused element has a visible focus indicator in Playwright?", a: "Use `page.locator(':focus')` to get the focused element, then `evaluate(el => getComputedStyle(el).outlineStyle)` to check the computed style. A value of 'none' means no visible outline — a WCAG 2.4.7 (Level AA) violation. Also check outline-width and outline-color for sufficient contrast." },
+  { q: "What key activates a focused button in HTML and why do you need to test both Enter and Space?", a: "Native `<button>` elements respond to both Enter and Space by spec. However, custom elements with role=button may only handle click events (mouse), missing keyboard activation. Test both keys for any button-like element, especially in custom component libraries." }
+]} />

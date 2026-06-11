@@ -1,0 +1,181 @@
+---
+title: "axe-core with Playwright"
+level: 15
+order: 2
+description: "Integrate axe-core into Playwright tests to automatically detect WCAG violations on any page or component."
+duration: "30 min"
+status: complete
+widgets:
+  - diagram
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+import MermaidDiagram from '../../../components/react/MermaidDiagram';
+
+## What axe-core Does
+
+axe-core is an automated accessibility testing engine developed by Deque. It analyses the DOM and reports WCAG violations with severity, element reference, and remediation guidance.
+
+**Coverage:** axe-core catches ~30-40% of WCAG issues automatically. The rest require manual testing (keyboard navigation, screen reader experience, colour contrast in context).
+
+<MermaidDiagram client:only="react" chart={"flowchart LR\n    A[Playwright\nnavigates page] --> B[Inject\naxe-core]\n    B --> C[axe.run\nanalyses DOM]\n    C --> D{Violations\nfound?}\n    D -->|yes| E[Test fails\nwith details]\n    D -->|no| F[Test passes]"} />
+
+## Setup
+
+```bash
+npm install -D @axe-core/playwright
+```
+
+```ts
+// playwright.config.ts — no special config needed, axe runs per-test
+```
+
+## Basic Usage
+
+```ts
+import { test, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+
+test('home page has no WCAG violations', async ({ page }) => {
+  await page.goto('/');
+
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+});
+```
+
+## Scoping Axe Analysis
+
+```ts
+// Analyse a specific component only
+test('login form is accessible', async ({ page }) => {
+  await page.goto('/login');
+
+  const results = await new AxeBuilder({ page })
+    .include('#login-form')   // only analyse this element
+    .analyze();
+
+  expect(results.violations).toEqual([]);
+});
+
+// Exclude a known third-party widget you can't fix
+test('page is accessible excluding chat widget', async ({ page }) => {
+  await page.goto('/');
+
+  const results = await new AxeBuilder({ page })
+    .exclude('#third-party-chat')
+    .analyze();
+
+  expect(results.violations).toEqual([]);
+});
+```
+
+## Targeting Specific WCAG Tags
+
+```ts
+// Only check WCAG 2.1 Level AA rules
+const results = await new AxeBuilder({ page })
+  .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+  .analyze();
+
+// Available tags:
+// wcag2a, wcag2aa, wcag2aaa   → WCAG 2.0 levels
+// wcag21a, wcag21aa           → WCAG 2.1 additions
+// wcag22aa                    → WCAG 2.2 additions
+// best-practice               → additional best practices
+```
+
+## Readable Failure Output
+
+By default, a failure dumps the full violations array. Make it readable:
+
+```ts
+import { test, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+
+test.describe('Accessibility', () => {
+  test('no violations on checkout page', async ({ page }, testInfo) => {
+    await page.goto('/checkout');
+
+    const results = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa'])
+      .analyze();
+
+    // Attach full results to test report for investigation
+    await testInfo.attach('accessibility-scan-results', {
+      body: JSON.stringify(results, null, 2),
+      contentType: 'application/json',
+    });
+
+    // Readable failure message
+    const violationSummary = results.violations.map(v =>
+      `[${v.impact}] ${v.id}: ${v.description}\n  Elements: ${v.nodes.map(n => n.target).join(', ')}`
+    ).join('\n\n');
+
+    expect(results.violations, violationSummary).toEqual([]);
+  });
+});
+```
+
+## Axe Fixture
+
+```ts
+// fixtures/axe.fixture.ts
+import { test as base } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+
+type A11yFixtures = {
+  checkA11y: (selector?: string) => Promise<void>;
+};
+
+export const test = base.extend<A11yFixtures>({
+  checkA11y: async ({ page }, use, testInfo) => {
+    await use(async (selector?: string) => {
+      const builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']);
+      if (selector) builder.include(selector);
+
+      const results = await builder.analyze();
+
+      await testInfo.attach('axe-results', {
+        body: JSON.stringify(results.violations, null, 2),
+        contentType: 'application/json',
+      });
+
+      expect(results.violations).toEqual([]);
+    });
+  },
+});
+
+// Usage in test
+test('product page is accessible', async ({ page, checkA11y }) => {
+  await page.goto('/product/123');
+  await checkA11y('#product-details');
+});
+```
+
+## Understanding Violation Output
+
+```json
+{
+  "id": "color-contrast",
+  "impact": "serious",
+  "description": "Ensures the contrast between foreground and background colors meets WCAG 2 AA contrast ratio thresholds",
+  "helpUrl": "https://dequeuniversity.com/rules/axe/4.7/color-contrast",
+  "nodes": [
+    {
+      "target": ["#submit-btn"],
+      "failureSummary": "Fix any of the following: Element has insufficient color contrast of 2.5:1 (foreground: #999999, background: #ffffff, font size: 14pt). Expected contrast ratio of 4.5:1"
+    }
+  ]
+}
+```
+
+**Impact levels:** `critical` → `serious` → `moderate` → `minor`
+
+<QuizCard client:only="react" storageKey="a11y-axe" questions={[
+  { q: "What percentage of WCAG issues can axe-core detect automatically, and why not 100%?", a: "axe-core catches ~30-40% of WCAG issues. The remainder require human judgement: whether alt text is meaningful (not just present), whether the reading order makes sense, whether colour contrast works in context, and whether the screen reader experience is understandable." },
+  { q: "How do you scope an axe scan to a specific component without scanning the whole page?", a: "Use `.include('#selector')` on the AxeBuilder instance. This restricts analysis to that DOM subtree. Useful for component-level accessibility tests or when a known third-party widget has unfixable violations (use `.exclude()` for those)." },
+  { q: "Why should you attach axe results to the test report even when the test passes?", a: "Attaching results (especially on failure) gives engineers the full violation details without re-running the test. The `testInfo.attach()` call stores JSON in the HTML report, showing impact level, affected elements, and links to remediation guidance." },
+  { q: "What axe tags should you use to target WCAG 2.1 Level AA compliance?", a: "Use `.withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])`. This covers WCAG 2.0 A and AA rules plus the additional WCAG 2.1 criteria. Without explicit tags, axe runs all rules including best-practice rules that may not be compliance requirements." }
+]} />

@@ -1,0 +1,148 @@
+---
+title: "Percy & Chromatic"
+level: 16
+order: 2
+description: "Integrate Percy and Chromatic for cross-browser visual reviews with cloud rendering, diffing, and team approval workflows."
+duration: "25 min"
+status: complete
+widgets:
+  - diagram
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+import MermaidDiagram from '../../../components/react/MermaidDiagram';
+
+## Why Cloud Visual Testing Services?
+
+Local `toHaveScreenshot` solves single-browser regression. Cloud services add:
+
+- **Cross-browser rendering** — compare Chrome, Firefox, Safari, Edge in one run
+- **Responsive snapshots** — capture multiple viewports automatically
+- **Review workflow** — visual diffs in a web UI, team approval before merge
+- **Baseline management** — no baseline files in git, managed in the cloud
+- **Consistent rendering** — cloud renders snapshots in a controlled environment
+
+<MermaidDiagram client:only="react" chart={"flowchart LR\n    A[Playwright\ntest runs] --> B[SDK captures\nDOM snapshot]\n    B --> C[Upload to\ncloud service]\n    C --> D[Cloud renders\nin browsers]\n    D --> E[Pixel diff\nvs baseline]\n    E --> F{Diff\nfound?}\n    F -->|yes| G[PR comment\nwith diff]\n    F -->|no| H[Auto-approve\nCI passes]"} />
+
+## Percy Setup
+
+```bash
+npm install -D @percy/cli @percy/playwright
+```
+
+```ts
+// e2e/visual.spec.ts
+import { test } from '@playwright/test';
+import percySnapshot from '@percy/playwright';
+
+test('home page visual', async ({ page }) => {
+  await page.goto('/');
+  await percySnapshot(page, 'Home Page');
+});
+
+test('product card visual', async ({ page }) => {
+  await page.goto('/products');
+  await percySnapshot(page, 'Product Listing', {
+    widths: [375, 768, 1280],  // capture at mobile, tablet, desktop
+  });
+});
+```
+
+```yaml
+# .github/workflows/visual.yml
+- name: Run Percy
+  run: npx percy exec -- npx playwright test e2e/visual.spec.ts
+  env:
+    PERCY_TOKEN: ${{ secrets.PERCY_TOKEN }}
+```
+
+**How Percy works:**
+1. SDK captures DOM + assets (not a screenshot)
+2. Uploads to Percy cloud
+3. Percy renders pixel-perfect snapshots in browsers
+4. Compares against approved baseline
+5. Reports diff to PR
+
+## Chromatic Setup
+
+Chromatic is primarily for Storybook component visual testing but also supports Playwright.
+
+```bash
+npm install -D chromatic
+```
+
+```ts
+// With Storybook (most common use)
+// Run: npx chromatic --project-token=<token>
+// Chromatic captures every story at every breakpoint
+
+// With Playwright (E2E visual)
+import { test } from '@playwright/test';
+import { takeSnapshot } from '@chromatic-com/playwright';
+
+test('checkout flow visual', async ({ page }) => {
+  await page.goto('/checkout');
+  await takeSnapshot(page, 'Checkout Step 1');
+
+  await page.getByRole('button', { name: 'Continue to payment' }).click();
+  await takeSnapshot(page, 'Checkout Step 2');
+});
+```
+
+## Percy vs Chromatic vs Local
+
+| Feature | `toHaveScreenshot` | Percy | Chromatic |
+|---|---|---|---|
+| **Setup** | Zero (built-in) | PERCY_TOKEN | Project token |
+| **Baselines** | Git (png files) | Cloud | Cloud |
+| **Cross-browser** | One browser | Multiple | Multiple |
+| **Review UI** | None (just fail) | Web UI | Web UI |
+| **Storybook** | No | No | Yes (primary) |
+| **E2E pages** | Yes | Yes | Yes |
+| **Free tier** | N/A | 5k snapshots/mo | 5k snapshots/mo |
+| **Best for** | CI regression gate | Full-page E2E | Component library |
+
+## Review Workflow
+
+```
+Percy/Chromatic flow on PR:
+
+1. CI runs visual tests → uploads snapshots
+2. Service renders + diffs against baseline
+3. If diffs found:
+   - PR check shows "X visual changes"
+   - Link to review UI with side-by-side diffs
+4. Team reviews in browser:
+   - "Approve" → diff becomes new baseline
+   - "Reject" → PR blocked, dev must fix
+5. Baseline updates are permanent in cloud
+   (not a file commit)
+```
+
+## When to Use Each Approach
+
+```
+Local toHaveScreenshot:
+✅ No external service dependency
+✅ Works offline, instant feedback
+✅ Full Playwright options (mask, clip, threshold)
+❌ Cross-browser requires multiple baseline sets
+❌ No review UI
+Best for: regression gates on a single browser in CI
+
+Percy/Chromatic:
+✅ Cross-browser in one run
+✅ Review workflow with team approval
+✅ Consistent cloud rendering
+❌ External service dependency
+❌ Cost at scale
+Best for: design system validation, cross-browser visual QA
+```
+
+<QuizCard client:only="react" storageKey="visual-percy" questions={[
+  { q: "How does Percy capture snapshots differently from Playwright's toHaveScreenshot?", a: "Percy captures the DOM and assets (HTML, CSS, fonts, images) and uploads them to the cloud. Percy's servers then render the snapshot in multiple browsers. Playwright captures a pixel bitmap locally. Percy's approach produces more consistent cross-browser results because rendering happens in a controlled cloud environment." },
+  { q: "What is the visual review workflow in Percy/Chromatic and why is team approval important?", a: "When visual diffs are detected, a PR check shows them in a web UI for side-by-side comparison. A team member approves intentional changes (making them the new baseline) or rejects unintentional regressions. This prevents both false positives (auto-failing design updates) and false negatives (auto-approving broken UI)." },
+  { q: "When would you choose local Playwright screenshots over Percy?", a: "When: no external service dependency is acceptable (air-gapped CI, cost constraints, privacy), single-browser comparison is sufficient, you need Playwright-specific features (mask, clip, threshold), or you want zero setup overhead. Local screenshots are also better for element-level snapshots and tight feedback loops." },
+  { q: "What does `widths: [375, 768, 1280]` do in a Percy snapshot call?", a: "It captures the snapshot at three viewport widths in a single call — mobile (375px), tablet (768px), and desktop (1280px). Percy renders and diffs all three widths independently. This lets you catch responsive layout regressions without writing separate tests per breakpoint." }
+]} />

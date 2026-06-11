@@ -1,0 +1,146 @@
+---
+title: "Screenshot & Visual Regression Testing"
+level: 16
+order: 1
+description: "Use Playwright's built-in toHaveScreenshot and toMatchSnapshot to catch visual regressions automatically."
+duration: "25 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## What Visual Testing Catches
+
+Functional tests verify behaviour — "the button submits the form." Visual tests verify appearance — "the button is still red, 16px, and right-aligned." A CSS regression can break the layout while every functional test still passes.
+
+Visual testing compares screenshots pixel-by-pixel against a saved baseline.
+
+## Playwright Built-in Screenshot Testing
+
+```ts
+import { test, expect } from '@playwright/test';
+
+// Full-page screenshot comparison
+test('home page looks correct', async ({ page }) => {
+  await page.goto('/');
+  await expect(page).toHaveScreenshot('home.png');
+});
+
+// Element-level screenshot
+test('product card looks correct', async ({ page }) => {
+  await page.goto('/products');
+  const card = page.locator('.product-card').first();
+  await expect(card).toHaveScreenshot('product-card.png');
+});
+```
+
+**First run:** No baseline exists → Playwright creates it and FAILS. Run again → passes.
+
+**Correct workflow:**
+```bash
+# 1. Generate baselines
+npx playwright test --update-snapshots
+
+# 2. Commit baselines to git
+git add tests/__screenshots__/
+git commit -m "chore: add visual test baselines"
+
+# 3. Future runs compare against committed baselines
+npx playwright test
+```
+
+## Snapshot Storage
+
+```
+tests/
+├── visual.spec.ts
+└── visual.spec.ts-snapshots/
+    ├── home-1-chromium-win32.png    # browser + OS in filename
+    ├── home-1-chromium-linux.png    # different baseline per platform!
+    └── product-card-1-chromium-linux.png
+```
+
+**Platform problem:** Screenshots differ between macOS, Linux, and Windows due to font rendering and anti-aliasing. Solutions:
+1. Generate baselines in CI (Linux) and only run visual tests in CI
+2. Use Docker to ensure consistent rendering environment
+3. Use a cloud visual testing service (Percy, Chromatic)
+
+## Threshold and Masking
+
+```ts
+// Allow small pixel differences (e.g., animation frames)
+await expect(page).toHaveScreenshot('home.png', {
+  maxDiffPixelRatio: 0.02,  // 2% pixel difference allowed
+});
+
+// Or absolute pixel count
+await expect(page).toHaveScreenshot('home.png', {
+  maxDiffPixels: 100,
+});
+
+// Mask dynamic content (dates, ads, user avatars)
+await expect(page).toHaveScreenshot('dashboard.png', {
+  mask: [
+    page.locator('.user-avatar'),
+    page.locator('.last-login-date'),
+    page.locator('.ad-banner'),
+  ],
+});
+
+// Clip to specific region
+await expect(page).toHaveScreenshot('header.png', {
+  clip: { x: 0, y: 0, width: 1280, height: 80 },
+});
+```
+
+## Stabilising Screenshots Before Capture
+
+```ts
+test('animated hero looks correct', async ({ page }) => {
+  await page.goto('/');
+
+  // Wait for animations to complete before screenshot
+  await page.waitForLoadState('networkidle');
+  await page.evaluate(() => {
+    // Disable CSS animations and transitions
+    document.documentElement.style.setProperty('--animation-duration', '0s');
+    document.documentElement.style.setProperty('--transition-duration', '0s');
+  });
+
+  // Wait for lazy images to load
+  await page.waitForSelector('img[loading="lazy"]', { state: 'visible' });
+
+  await expect(page).toHaveScreenshot('hero.png');
+});
+```
+
+## Updating Baselines
+
+```bash
+# Update all snapshots
+npx playwright test --update-snapshots
+
+# Update specific test's snapshot
+npx playwright test visual.spec.ts --update-snapshots
+
+# After update: review the diff before committing
+git diff tests/__screenshots__/
+```
+
+## toMatchSnapshot vs toHaveScreenshot
+
+| | `toHaveScreenshot` | `toMatchSnapshot` |
+|---|---|---|
+| **Target** | Page or element | Any value (Buffer, string) |
+| **Threshold options** | Yes (maxDiffPixels, mask, clip) | No |
+| **Retry on diff** | Yes (retries until stable) | No |
+| **Recommended for** | Visual UI testing | Binary data comparison |
+
+<QuizCard client:only="react" storageKey="visual-screenshots" questions={[
+  { q: "Why does `toHaveScreenshot` fail on the very first run and what should you do?", a: "No baseline image exists yet, so there's nothing to compare against. Playwright creates the baseline file and fails. Run `--update-snapshots` to generate baselines, review them visually, commit them to git, and then subsequent runs will compare against those baselines." },
+  { q: "Why do visual tests produce different results on macOS vs Linux even for the same page?", a: "Font rendering and anti-aliasing differ between operating systems. macOS uses sub-pixel rendering; Linux uses grayscale or no anti-aliasing. The pixel-by-pixel comparison will fail even though the page looks functionally identical. Solution: generate and run visual tests in a consistent environment (CI/Docker/Linux)." },
+  { q: "How do you handle a page that has a date or user-specific content that changes every test run?", a: "Use the `mask` option in `toHaveScreenshot()` to overlay dynamic elements with a solid colour before capture. This hides them in both the baseline and comparison screenshots, preventing false positives from expected content changes." },
+  { q: "What is `maxDiffPixelRatio` and when would you set it above 0?", a: "The ratio (0.0–1.0) of pixels allowed to differ between baseline and actual. Set above 0 when: animations leave minor rendering artifacts, fonts render with slight sub-pixel differences, or a known minor visual difference is acceptable. Default is 0 (exact match). Typically use 0.01–0.02 (1-2%) for tolerating minor rendering noise." }
+]} />

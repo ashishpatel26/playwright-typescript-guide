@@ -5,7 +5,7 @@ const topics = defineCollection({
   loader: glob({ pattern: '**/*.mdx', base: './src/content/levels' }),
   schema: z.object({
     title: z.string(),
-    level: z.number().int().min(0).max(14),
+    level: z.number().int().min(0).max(17),
     order: z.number().int(),
     description: z.string(),
     practiceSite: z.object({ name: z.string(), url: z.string().url() }).optional(),

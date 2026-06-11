@@ -1,0 +1,191 @@
+---
+title: "Visual Regression in CI"
+level: 16
+order: 3
+description: "Build a reliable visual regression pipeline — Docker-based baselines, update workflows, and PR gates that don't produce false positives."
+duration: "20 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## The CI Visual Testing Problem
+
+Visual tests are notoriously flaky in CI because:
+
+1. **Platform differences** — Linux CI renders fonts differently than macOS dev machines
+2. **Timing issues** — animations, lazy images, fonts not loaded at capture time
+3. **Dynamic content** — timestamps, ads, user-specific data change every run
+4. **Baseline drift** — baselines committed by one machine fail on another
+
+This page covers strategies to make visual CI reliable.
+
+## Strategy 1: Generate Baselines in Docker
+
+Ensure baselines and test runs use identical rendering environments:
+
+```dockerfile
+# Dockerfile.visual — use the official Playwright image
+FROM mcr.microsoft.com/playwright:v1.45.0-jammy
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+```
+
+```bash
+# Generate baselines (run once, commit the output)
+docker run --rm -v $(pwd):/app playwright-visual \
+  npx playwright test visual.spec.ts --update-snapshots
+
+# Verify baselines (every CI run)
+docker run --rm -v $(pwd):/app playwright-visual \
+  npx playwright test visual.spec.ts
+```
+
+```yaml
+# .github/workflows/visual.yml
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.45.0-jammy
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npx playwright test visual.spec.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: visual-diff
+          path: test-results/
+```
+
+## Strategy 2: Stabilise Before Capture
+
+```ts
+// fixtures/stable-page.fixture.ts
+import { test as base, Page } from '@playwright/test';
+
+async function stabilisePage(page: Page) {
+  // Wait for network to settle
+  await page.waitForLoadState('networkidle');
+
+  // Freeze animations and transitions
+  await page.addStyleTag({
+    content: `
+      *, *::before, *::after {
+        animation-duration: 0s !important;
+        animation-delay: 0s !important;
+        transition-duration: 0s !important;
+        transition-delay: 0s !important;
+      }
+    `,
+  });
+
+  // Wait for custom fonts to load
+  await page.evaluate(() => document.fonts.ready);
+
+  // Wait for lazy images
+  await page.evaluate(() =>
+    Promise.all(
+      Array.from(document.querySelectorAll('img[loading="lazy"]'))
+        .filter((img): img is HTMLImageElement => img instanceof HTMLImageElement)
+        .map(img => img.complete ? Promise.resolve() : new Promise(r => { img.onload = r; }))
+    )
+  );
+}
+
+export const test = base.extend({
+  page: async ({ page }, use) => {
+    // Expose stabilise as a method
+    (page as any).stabilise = () => stabilisePage(page);
+    await use(page);
+  },
+});
+```
+
+## Strategy 3: Update Snapshot Workflow
+
+When intentional visual changes land, baselines need updating. Automate this:
+
+```yaml
+# .github/workflows/update-snapshots.yml
+name: Update Visual Snapshots
+on:
+  workflow_dispatch:    # manual trigger
+    inputs:
+      test_filter:
+        description: 'Test file or grep pattern (optional)'
+        required: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.45.0-jammy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm ci
+      - run: npx playwright test ${{ inputs.test_filter }} --update-snapshots
+      - name: Commit updated snapshots
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add '**/*-snapshots/**'
+          git diff --staged --quiet || git commit -m "chore: update visual snapshots"
+          git push
+```
+
+## Strategy 4: Visual Tests as Non-Blocking Gates
+
+For teams starting with visual testing, run visual tests in informational mode:
+
+```yaml
+# Don't fail the PR, but report diffs
+- name: Visual tests (informational)
+  run: npx playwright test visual.spec.ts || true  # never fails CI
+  
+- name: Upload diff report
+  uses: actions/upload-artifact@v4
+  with:
+    name: visual-diff-report
+    path: playwright-report/
+```
+
+Upgrade to blocking once baselines are stable and the team trusts the suite.
+
+## Visual Test File Organisation
+
+```ts
+// Separate visual tests from functional tests
+e2e/
+├── functional/          // fast, always blocking
+│   ├── auth.spec.ts
+│   └── checkout.spec.ts
+└── visual/              // slower, blocking after stabilisation
+    ├── pages.spec.ts    // full-page snapshots
+    └── components.spec.ts  // component-level snapshots
+
+// playwright.config.ts
+projects: [
+  { name: 'functional', testDir: 'e2e/functional' },
+  {
+    name: 'visual',
+    testDir: 'e2e/visual',
+    use: { viewport: { width: 1280, height: 720 } },
+  },
+]
+```
+
+<QuizCard client:only="react" storageKey="visual-ci" questions={[
+  { q: "Why should visual baselines be generated in the same Docker image used in CI?", a: "Font rendering, anti-aliasing, and pixel density differ between operating systems. A baseline generated on macOS will differ from a screenshot taken on the CI Linux runner even for identical HTML. Using the same Docker image (e.g., mcr.microsoft.com/playwright) ensures both baseline generation and test execution render identically." },
+  { q: "What CSS trick eliminates animation-related flakiness in visual screenshots?", a: "Inject a style tag with `animation-duration: 0s` and `transition-duration: 0s` on all elements before capturing. This freezes animations at their initial state, making every screenshot deterministic regardless of when during the animation cycle the capture happened." },
+  { q: "Why would you run visual tests as non-blocking gates initially?", a: "Visual test suites start with unstable baselines — platforms differ, dynamic content isn't fully masked, and the team hasn't agreed on tolerance thresholds. Running informational first lets teams identify and fix flaky tests before making them blocking gates, avoiding PR bottlenecks from noisy visual failures." },
+  { q: "What is the purpose of a manual 'update snapshots' CI workflow?", a: "When intentional visual changes land (redesign, component update), baselines need updating. Rather than requiring developers to regenerate baselines locally (which may differ from CI rendering), a manual CI workflow runs on the same infrastructure, updates snapshots, and commits them — ensuring baselines always match CI rendering." }
+]} />

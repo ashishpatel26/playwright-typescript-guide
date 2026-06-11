@@ -1,0 +1,182 @@
+---
+title: "Screen Reader & AT Testing"
+level: 15
+order: 4
+description: "Test accessible names, live regions, announcements, and accessibility tree structure to validate screen reader experiences."
+duration: "25 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## What Screen Readers Do
+
+Screen readers (NVDA, JAWS, VoiceOver) convert visual interfaces into speech or Braille. They navigate the **accessibility tree** — a structured representation of the DOM built by the browser from HTML semantics and ARIA attributes.
+
+```
+Visual DOM:          Accessibility tree:
+<div class="card">   → generic container (ignored or group)
+  <h2>Product</h2>   → heading level 2 "Product"
+  <img src="...">    → image "Blue sneaker, size 10" (alt text)
+  <button>Add</button> → button "Add to cart"
+```
+
+## Testing Accessible Names
+
+The accessible name is what a screen reader announces for an element. It comes from (in priority order):
+
+1. `aria-labelledby` (points to another element)
+2. `aria-label` (explicit string)
+3. Associated `<label>` element
+4. Element's own text content
+5. `alt` attribute (for images)
+6. `title` attribute (least preferred)
+
+```ts
+test('form inputs have accessible names', async ({ page }) => {
+  await page.goto('/contact');
+
+  // Check via getByLabel — fails if no accessible name matches
+  await expect(page.getByLabel('Full name')).toBeVisible();
+  await expect(page.getByLabel('Email address')).toBeVisible();
+  await expect(page.getByLabel('Message')).toBeVisible();
+});
+
+test('icon buttons have accessible names', async ({ page }) => {
+  await page.goto('/');
+
+  // Icon-only button must have aria-label
+  const closeButton = page.getByRole('button', { name: 'Close' });
+  await expect(closeButton).toBeVisible();
+
+  // Verify the aria-label is present
+  await expect(closeButton).toHaveAttribute('aria-label', 'Close');
+});
+
+test('images have meaningful alt text', async ({ page }) => {
+  await page.goto('/products');
+
+  const images = page.locator('img');
+  const count = await images.count();
+
+  for (let i = 0; i < count; i++) {
+    const img = images.nth(i);
+    const alt = await img.getAttribute('alt');
+    const role = await img.getAttribute('role');
+
+    // Every img must have alt attribute (even if empty for decorative)
+    expect(alt).not.toBeNull();
+
+    // Decorative images: alt="" or role="presentation"
+    // Content images: alt should describe the content (not just filename)
+    if (alt && alt.length > 0) {
+      expect(alt).not.toMatch(/\.(jpg|png|gif|webp|svg)$/i); // not a filename
+      expect(alt).not.toBe('image');  // not generic
+    }
+  }
+});
+```
+
+## Testing ARIA Live Regions
+
+Live regions announce dynamic content changes to screen readers without requiring focus change.
+
+```ts
+test('error message is announced via live region', async ({ page }) => {
+  await page.goto('/login');
+
+  // Submit empty form
+  await page.getByRole('button', { name: 'Sign in' }).click();
+
+  // Error should appear in an element with role="alert" (implicit aria-live="assertive")
+  const error = page.getByRole('alert');
+  await expect(error).toBeVisible();
+  await expect(error).toContainText('Email is required');
+});
+
+test('toast notification uses live region', async ({ page }) => {
+  await page.goto('/settings');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+
+  // Status message should use role="status" (implicit aria-live="polite")
+  const toast = page.getByRole('status');
+  await expect(toast).toContainText('Settings saved');
+});
+```
+
+## Testing Accessibility Tree Structure
+
+```ts
+test('page has correct landmark structure', async ({ page }) => {
+  await page.goto('/');
+
+  // Every page needs these landmarks
+  await expect(page.getByRole('banner')).toBeVisible();       // <header>
+  await expect(page.getByRole('navigation')).toBeVisible();   // <nav>
+  await expect(page.getByRole('main')).toBeVisible();         // <main>
+  await expect(page.getByRole('contentinfo')).toBeVisible();  // <footer>
+});
+
+test('heading hierarchy is correct', async ({ page }) => {
+  await page.goto('/article');
+
+  // Should have exactly one h1
+  await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
+
+  // h2s should exist under h1 (structure check)
+  const h2Count = await page.getByRole('heading', { level: 2 }).count();
+  expect(h2Count).toBeGreaterThan(0);
+
+  // No h3 without h2 (skipped heading levels)
+  const h3Count = await page.getByRole('heading', { level: 3 }).count();
+  if (h3Count > 0) {
+    expect(h2Count).toBeGreaterThan(0);
+  }
+});
+```
+
+## Testing Dynamic State Announcements
+
+```ts
+test('expanded state is announced for accordion', async ({ page }) => {
+  await page.goto('/faq');
+
+  const trigger = page.getByRole('button', { name: 'What is your return policy?' });
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+
+  // Content panel should be linked via aria-controls
+  const controlsId = await trigger.getAttribute('aria-controls');
+  expect(controlsId).not.toBeNull();
+  await expect(page.locator(`#${controlsId}`)).toBeVisible();
+});
+```
+
+## Manual Screen Reader Testing
+
+Automated tests cover structure and attributes. Manual testing is needed for:
+
+| Tool | Platform | Test with |
+|---|---|---|
+| NVDA | Windows | Firefox or Chrome |
+| JAWS | Windows | Chrome or IE/Edge |
+| VoiceOver | macOS/iOS | Safari |
+| TalkBack | Android | Chrome |
+
+**Manual test checklist:**
+- Navigate all pages by headings (H key in NVDA/JAWS)
+- Tab through all interactive elements — are names and roles announced correctly?
+- Fill and submit a form — are error messages announced?
+- Open and close a modal — does focus move correctly?
+- Trigger a live region update — is the message announced?
+
+<QuizCard client:only="react" storageKey="a11y-screen-reader" questions={[
+  { q: "What is the accessibility tree and how is it built?", a: "The accessibility tree is a structured representation of the DOM that browsers expose to assistive technologies. It's built from HTML semantics (heading levels, buttons, links, landmarks) and ARIA attributes. Screen readers navigate this tree, not the visual DOM." },
+  { q: "What is a live region and when should you use role='alert' vs role='status'?", a: "A live region announces dynamic content changes to screen readers. role='alert' (aria-live='assertive') interrupts the user immediately — use for errors and critical messages. role='status' (aria-live='polite') waits for the user to finish the current task — use for success toasts and status updates." },
+  { q: "Why is `page.getByLabel('Email')` a better accessibility test than `page.locator('#email-input')`?", a: "getByLabel tests the accessible name — it only finds the element if it has a visible associated label. This verifies that screen readers can announce the field's purpose. Locator by ID tests technical implementation that gives no accessibility signal." },
+  { q: "What makes an alt text value unacceptable for a content image?", a: "Filename as alt text (photo.jpg), generic text ('image', 'photo', 'picture'), missing alt attribute entirely, or a description that duplicates adjacent text content without adding value. Good alt text describes the meaning/purpose of the image in context, not just what's visually depicted." }
+]} />

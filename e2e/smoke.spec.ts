@@ -7,7 +7,7 @@ import { test, expect } from '@playwright/test';
 test('landing page renders hero and roadmap', async ({ page }) => {
   await page.goto('./');
   await expect(page.getByRole('heading', { level: 1 })).toContainText('production way');
-  await expect(page.locator('.level-card')).toHaveCount(15);
+  await expect(page.locator('.level-card')).toHaveCount(18);
 });
 
 test('level hub lists topics', async ({ page }) => {

@@ -116,4 +116,19 @@ test.describe('Widget smoke tests', () => {
     await page.goto('levels/14/framework-design-questions/');
     await expect(page.locator('[data-testid="quiz-card"]')).toBeVisible({ timeout: 15000 });
   });
+
+  test('L15 axe-core-playwright renders with Mermaid diagram', async ({ page }) => {
+    await page.goto('levels/15/axe-core-playwright/');
+    await expect(page.locator('svg[id^="mmd-"]').first()).toBeVisible({ timeout: 20000 });
+  });
+
+  test('L16 percy-and-chromatic renders with Mermaid diagram', async ({ page }) => {
+    await page.goto('levels/16/percy-and-chromatic/');
+    await expect(page.locator('svg[id^="mmd-"]').first()).toBeVisible({ timeout: 20000 });
+  });
+
+  test('L17 device-emulation renders with quiz', async ({ page }) => {
+    await page.goto('levels/17/device-emulation/');
+    await expect(page.locator('[data-testid="quiz-card"]')).toBeVisible({ timeout: 15000 });
+  });
 });
