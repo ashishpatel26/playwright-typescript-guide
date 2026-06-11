@@ -1,0 +1,146 @@
+---
+title: Frames & Shadow DOM
+level: 3
+order: 2
+description: Locating elements inside iframes and shadow roots — the two DOM boundaries that break naive selectors.
+duration: 30 min
+status: complete
+widgets: ['quiz']
+practiceSite:
+  name: The Internet — Frames
+  url: https://the-internet.herokuapp.com/iframe
+---
+
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import QuizCard from '../../../components/react/QuizCard';
+
+## Two boundaries, two behaviours
+
+An **iframe** embeds a separate document with its own DOM tree. A **shadow
+root** encapsulates a subtree inside the same document. Both hide content
+from plain `page.locator()` — but Playwright handles them very differently:
+frames need `frameLocator()`, shadow DOM pierces automatically.
+
+## iframes: frameLocator
+
+```ts
+// The iframe on the page
+// <iframe src="editor.html" title="Rich text editor"></iframe>
+
+const editor = page.frameLocator('iframe[title="Rich text editor"]');
+
+// Locate INSIDE the frame with the same locator API
+await editor.getByRole('textbox').fill('Hello from inside the frame');
+await editor.getByRole('button', { name: 'Bold' }).click();
+
+// Assertions work the same way
+await expect(editor.locator('#tinymce')).toContainText('Hello');
+```
+
+`frameLocator()` is lazy and auto-waiting like every locator — it re-resolves
+the frame on every action, so a frame that reloads doesn't break your test.
+
+## Nested frames
+
+```ts
+// Frame inside a frame — chain frameLocator calls
+const inner = page
+  .frameLocator('#outer-frame')
+  .frameLocator('#inner-frame');
+
+await inner.getByText('Deeply nested content').click();
+```
+
+## frame() vs frameLocator()
+
+```ts
+// frameLocator — for locating elements (preferred, auto-waits)
+const fl = page.frameLocator('iframe[name="checkout"]');
+
+// frame() — a Frame object, for frame-level operations
+const frame = page.frame({ name: 'checkout' });
+await frame?.evaluate(() => document.title);   // run JS in the frame
+const url = frame?.url();                       // read frame URL
+```
+
+<Tip>Reach for <code>frameLocator()</code> by default. Use <code>frame()</code> only when you need the Frame object itself — evaluating scripts, reading the frame URL, or waiting for frame navigation.</Tip>
+
+## Shadow DOM: it just works
+
+Playwright locators pierce **open** shadow roots automatically:
+
+```ts
+// <custom-dropdown>
+//   #shadow-root (open)
+//     <button class="trigger">Choose...</button>
+// </custom-dropdown>
+
+// No special API — this finds the button inside the shadow root
+await page.locator('custom-dropdown .trigger').click();
+await page.getByRole('button', { name: 'Choose...' }).click(); // also works
+```
+
+Exceptions:
+- **Closed** shadow roots are not reachable — by design, by anyone.
+- **XPath does not pierce shadow DOM.** CSS and the getBy* locators do.
+
+```ts
+// ❌ XPath stops at the shadow boundary
+await page.locator('//custom-dropdown//button').click(); // fails
+
+// ✅ CSS pierces
+await page.locator('custom-dropdown button').click();
+```
+
+## Web components in practice
+
+```ts
+test('add book in shadow-DOM PWA', async ({ page }) => {
+  await page.goto('https://books-pwakit.appspot.com/');
+
+  // book-app → app-header → input live in nested shadow roots.
+  // Plain CSS walks through all of them:
+  await page.locator('book-app input#input').fill('typescript');
+  await page.keyboard.press('Enter');
+
+  await expect(page.locator('book-item').first()).toBeVisible();
+});
+```
+
+## Reference
+
+<CmdTable rows={[
+  { c: 'page.frameLocator(sel)', d: 'Locator scope inside an iframe (auto-waits)' },
+  { c: 'fl.frameLocator(sel)', d: 'Chain into nested frames' },
+  { c: 'page.frame({ name })', d: 'Frame object by name attribute' },
+  { c: 'page.frames()', d: 'All frames including main frame' },
+  { c: 'frame.evaluate(fn)', d: 'Run JavaScript inside the frame' },
+  { c: 'page.locator(\'host element css\')', d: 'CSS pierces open shadow roots automatically' },
+]} />
+
+## Practice on The Internet
+
+1. `https://the-internet.herokuapp.com/iframe` — type into the TinyMCE editor via `frameLocator`.
+2. `https://the-internet.herokuapp.com/nested_frames` — read text from the bottom frame via chained frame access.
+3. `https://books-pwakit.appspot.com/` — search for a book through three levels of shadow DOM.
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="pw-adv-frames" questions={[
+  {
+    q: "How does locating elements in an iframe differ from the main page?",
+    a: "An iframe is a separate document, so page.locator() cannot see into it. Use page.frameLocator(selector) to create a locator scope inside the frame, then use the normal locator API on that scope. frameLocator auto-waits and re-resolves the frame on each action, surviving frame reloads.",
+    senior: "frameLocator's lazy resolution matters for ads and third-party widgets that recreate their iframe on the fly — a stored Frame object goes stale, a frameLocator doesn't. The practical failure mode left: cross-origin frames that load slowly. The frame element existing doesn't mean its document is ready; assert on content inside the frame, not on the iframe element."
+  },
+  {
+    q: "Does Playwright need a special API for shadow DOM?",
+    a: "No — CSS selectors and all getBy* locators pierce open shadow roots automatically. The two exceptions: closed shadow roots are unreachable (by design), and XPath selectors do not pierce shadow boundaries.",
+    senior: "The XPath limitation is a common interview trap and a real migration pain: Selenium suites converted to Playwright often carry XPath selectors that silently fail on web components. The fix is mechanical — rewrite as CSS or role-based locators. If an app uses closed shadow roots, that's a testability conversation with the dev team, not a tooling problem."
+  },
+  {
+    q: "When do you need page.frame() instead of frameLocator()?",
+    a: "frameLocator() is for element location and covers most cases. frame() returns the Frame object, needed for frame-level operations: evaluate() to run JS inside the frame, reading frame.url(), or enumerating page.frames().",
+    senior: "A subtle difference: frame() resolves immediately and returns null if no match — it doesn't wait. frameLocator defers resolution until an action needs it. If you must use frame() right after navigation, pair it with an explicit wait for the frame to attach, or you get intermittent nulls in CI."
+  },
+]} />
