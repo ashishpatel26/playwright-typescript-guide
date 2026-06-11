@@ -1,0 +1,144 @@
+---
+title: Debugging & Trace Viewer
+level: 3
+order: 6
+description: Trace viewer, UI mode, --debug, codegen, videos and screenshots — find why a test failed in CI without rerunning it twenty times.
+duration: 25 min
+status: complete
+widgets: ['quiz']
+---
+
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import QuizCard from '../../../components/react/QuizCard';
+
+## The debugging toolchain
+
+| Situation | Tool |
+|---|---|
+| Test failed in CI, can't reproduce locally | Trace viewer |
+| Developing a new test interactively | UI mode (`--ui`) |
+| Stepping through one stubborn test | `--debug` (Inspector) |
+| Don't know the right locator | `codegen` / pick locator |
+| Need visual evidence for a bug report | Video + screenshots |
+
+## Trace viewer — the CI failure microscope
+
+A trace records everything: DOM snapshots before/after each action, network
+calls, console logs, and a timeline. It's a time machine for the failed test.
+
+```ts
+// playwright.config.ts
+export default defineConfig({
+  use: {
+    trace: 'on-first-retry',   // record only when a test retries — near-zero cost
+  },
+  retries: process.env.CI ? 2 : 0,
+});
+```
+
+```bash
+# Open a trace downloaded from CI artifacts
+npx playwright show-trace trace.zip
+
+# Or view the whole run's report (traces embedded)
+npx playwright show-report
+```
+
+Inside the viewer: click any action in the timeline → see the exact DOM
+state at that moment, the locator it resolved, network requests in flight,
+and console output. Most CI-only failures are diagnosed in minutes this way.
+
+<Tip><code>trace: 'on-first-retry'</code> is the production default: passing tests pay nothing, flaky and failing tests get full traces automatically. <code>trace: 'on'</code> everywhere doubles run time and disk usage.</Tip>
+
+## UI mode — interactive development
+
+```bash
+npx playwright test --ui
+```
+
+UI mode is a live test workbench: a watch-mode test list, time-travel
+timeline for every run, DOM snapshots, a locator picker, and instant re-run
+on save. Develop new tests here, not in a terminal loop.
+
+## Inspector — step through one test
+
+```bash
+npx playwright test login.spec.ts --debug
+```
+
+Opens a browser plus the Playwright Inspector: step through actions one at a
+time, see which locator each step resolves, and edit locators live in the
+console. Two targeted alternatives:
+
+```ts
+// Pause exactly where you need — runs headed, opens Inspector at this line
+await page.pause();
+```
+
+```bash
+# Verbose API logs without any UI
+DEBUG=pw:api npx playwright test failing.spec.ts
+```
+
+## Codegen — locator discovery
+
+```bash
+npx playwright codegen https://www.saucedemo.com
+```
+
+Click through the app; codegen writes locator-quality test code in real time.
+Treat the output as a draft — extract page objects and tighten assertions —
+but it's the fastest way to discover what `getByRole` name an element has.
+
+## Videos and screenshots
+
+```ts
+export default defineConfig({
+  use: {
+    screenshot: 'only-on-failure',  // attach final screenshot to report
+    video: 'retain-on-failure',     // keep video only when test fails
+  },
+});
+```
+
+```ts
+// Manual screenshot anywhere
+await page.screenshot({ path: 'evidence/checkout-bug.png', fullPage: true });
+```
+
+Failure screenshots land in the HTML report automatically — the first thing
+to check before opening a trace.
+
+## Reference
+
+<CmdTable rows={[
+  { c: 'npx playwright test --ui', d: 'Interactive UI mode with watch + time travel' },
+  { c: 'npx playwright test --debug', d: 'Step through with Inspector' },
+  { c: 'npx playwright show-trace trace.zip', d: 'Open a recorded trace' },
+  { c: 'npx playwright show-report', d: 'Open HTML report (traces embedded)' },
+  { c: 'npx playwright codegen <url>', d: 'Record actions into draft test code' },
+  { c: 'await page.pause()', d: 'Breakpoint: open Inspector at this line' },
+  { c: 'trace: \'on-first-retry\'', d: 'Config: trace only retried tests' },
+  { c: 'video: \'retain-on-failure\'', d: 'Config: keep videos of failures only' },
+]} />
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="pw-adv-debugging" questions={[
+  {
+    q: "A test fails only in CI. How do you debug it without rerunning CI repeatedly?",
+    a: "Configure trace: 'on-first-retry' with retries enabled, download the trace.zip from CI artifacts, and open it with npx playwright show-trace. The trace shows DOM snapshots before/after every action, network traffic, and console logs at the moment of failure — usually enough to diagnose without any rerun.",
+    senior: "The trace tells you what differed in CI: a slower API exposing a race, a cookie banner that only appears for the CI egress IP, viewport differences changing layout. Pair the trace with the failure screenshot and video for fast triage. If the trace shows the locator resolving differently, the bug is test-side; if the app state is wrong, it's environment or backend — that split determines who fixes it."
+  },
+  {
+    q: "What's the difference between UI mode and the Inspector (--debug)?",
+    a: "UI mode (--ui) is a development workbench: test list with watch mode, time-travel snapshots of past runs, locator picker, instant re-run. Inspector (--debug) is a stepping debugger for one test: pause at each action, inspect locator resolution, continue step by step. UI mode for writing tests; Inspector for dissecting one stubborn failure.",
+    senior: "page.pause() is the surgical middle ground — drop it at the suspect line and the test runs headed at full speed until that point, then opens the Inspector. Faster than stepping through fifty setup actions. Remove it before committing; a leftover pause() hangs CI until the test timeout."
+  },
+  {
+    q: "How should screenshots, videos, and traces be configured for a production CI suite?",
+    a: "screenshot: 'only-on-failure', video: 'retain-on-failure', trace: 'on-first-retry' with retries: 2 on CI. Passing tests generate near-zero artifact overhead; every failure automatically carries a screenshot, video, and (after retry) a full trace.",
+    senior: "Artifact storage compounds at scale — thousands of runs of videos add up. Set CI retention (7–14 days), and ensure artifacts upload even when the test job fails: in GitHub Actions that means if: always() on the upload step, otherwise the artifacts vanish exactly when you need them most."
+  },
+]} />
