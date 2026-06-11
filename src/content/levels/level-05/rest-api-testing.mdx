@@ -1,0 +1,124 @@
+---
+title: "REST API Testing with Playwright"
+level: 5
+order: 1
+description: "Use Playwright's request fixture to test REST APIs directly — no browser required."
+duration: "35 min"
+status: complete
+widgets:
+  - quiz
+practiceSite:
+  name: Restful Booker
+  url: https://restful-booker.herokuapp.com
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Why API Testing Matters
+
+API tests run 10–100× faster than UI tests and catch integration bugs at the contract boundary. Playwright's `request` fixture makes REST testing first-class — same runner, same config, same CI pipeline.
+
+The **test pyramid** puts API tests above unit tests but below UI tests. Shift coverage down: every user flow that touches an API should have an API-layer test, not just a UI test.
+
+## The `request` Fixture
+
+Playwright exposes `APIRequestContext` as the `request` fixture. It handles cookies, base URL, and response assertions natively.
+
+```ts
+import { test, expect } from '@playwright/test';
+
+test('GET /bookings returns list', async ({ request }) => {
+  const res = await request.get('https://restful-booker.herokuapp.com/booking');
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(Array.isArray(body)).toBe(true);
+});
+```
+
+## CRUD Flow
+
+```ts
+test('full booking CRUD', async ({ request }) => {
+  // Create
+  const create = await request.post('/booking', {
+    data: {
+      firstname: 'Jane',
+      lastname: 'Doe',
+      totalprice: 150,
+      depositpaid: true,
+      bookingdates: { checkin: '2025-01-01', checkout: '2025-01-07' },
+    },
+  });
+  expect(create.status()).toBe(200);
+  const { bookingid } = await create.json();
+
+  // Read
+  const get = await request.get(`/booking/${bookingid}`);
+  expect(get.status()).toBe(200);
+  expect(await get.json()).toMatchObject({ firstname: 'Jane' });
+
+  // Update (requires auth token)
+  const token = await getToken(request);
+  const patch = await request.patch(`/booking/${bookingid}`, {
+    headers: { Cookie: `token=${token}` },
+    data: { firstname: 'Updated' },
+  });
+  expect(patch.status()).toBe(200);
+
+  // Delete
+  const del = await request.delete(`/booking/${bookingid}`, {
+    headers: { Cookie: `token=${token}` },
+  });
+  expect(del.status()).toBe(201);
+});
+
+async function getToken(request: any) {
+  const res = await request.post('/auth', {
+    data: { username: 'admin', password: 'password123' },
+  });
+  return (await res.json()).token;
+}
+```
+
+## APIRequestContext vs. fetch
+
+| Feature | `request` fixture | `fetch` |
+|---|---|---|
+| Base URL from config | ✅ | ❌ manual |
+| Cookie jar | ✅ | ❌ |
+| `expect(res).toBeOK()` | ✅ | ❌ |
+| Works in `beforeAll` | ✅ | ✅ |
+| TypeScript response types | via `.json()` | via generics |
+
+## Response Assertions
+
+```ts
+// Status helpers
+expect(res.ok()).toBe(true);           // 200–299
+expect(res.status()).toBe(200);
+expect(res.statusText()).toBe('OK');
+
+// Body
+const json = await res.json();
+expect(json).toMatchObject({ id: expect.any(Number) });
+
+// Headers
+expect(res.headers()['content-type']).toContain('application/json');
+```
+
+## Practice: Restful Booker
+
+| Endpoint | Method | Auth required |
+|---|---|---|
+| `/booking` | GET | No |
+| `/booking` | POST | No |
+| `/booking/:id` | PUT/PATCH | Yes (token) |
+| `/booking/:id` | DELETE | Yes (token) |
+| `/auth` | POST | — (generates token) |
+
+<QuizCard client:only="react" storageKey="api-rest" questions={[
+  { q: "What Playwright fixture gives direct HTTP access without a browser?", a: "The `request` fixture (APIRequestContext). Import from `@playwright/test`, use in any test function." },
+  { q: "How does Playwright's `request` differ from native `fetch`?", a: "Respects `baseURL` from config, maintains a cookie jar, and exposes `.ok()` / `toBeOK()` assertions natively." },
+  { q: "What HTTP status does Restful Booker's DELETE return on success?", a: "201 Created — it's a quirk of that API. Always verify real status codes against the actual service, not assumptions.", senior: "This illustrates why contract tests matter: the API's actual behavior may differ from REST conventions. Document surprises in test comments." },
+  { q: "How do you share an authenticated `APIRequestContext` across tests in a file?", a: "Use `test.beforeAll` to create a request context and authenticate, store the token or cookies, then reuse in each test." }
+]} />
