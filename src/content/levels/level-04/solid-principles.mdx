@@ -1,0 +1,195 @@
+---
+title: SOLID for Automation
+level: 4
+order: 5
+description: The five SOLID principles translated into test framework decisions — with the violations you'll actually meet in real suites.
+duration: 35 min
+status: complete
+widgets: ['ts-playground', 'quiz']
+---
+
+import Tip from '../../../components/astro/Tip.astro';
+import TsPlayground from '../../../components/react/TsPlayground';
+import QuizCard from '../../../components/react/QuizCard';
+
+## S — Single Responsibility
+
+One class, one reason to change. The classic violation is the page object
+that also owns test data, API calls, and database checks:
+
+```ts
+// ❌ Four responsibilities — four reasons to change
+class CheckoutPage {
+  async fillCard(/*...*/) {}
+  async generateTestUser() {}          // test data
+  async verifyOrderInDatabase() {}     // db validation
+  async callPaymentApi() {}            // api client
+}
+
+// ✅ Each concern in its own unit
+class CheckoutPage { async fillCard(/*...*/) {} }
+function buildUser(/*...*/) {}
+class OrdersDb { async findOrder(/*...*/) {} }
+class PaymentsClient { async charge(/*...*/) {} }
+```
+
+## O — Open/Closed
+
+Open for extension, closed for modification. Add a payment method without
+editing the checkout flow:
+
+```ts
+// New payment types register themselves — checkout() never changes
+const strategies: Record<string, PaymentStrategy> = {};
+export function registerPayment(name: string, s: PaymentStrategy) {
+  strategies[name] = s;
+}
+
+export async function checkout(page: Page, method: string) {
+  await strategies[method].pay(page);   // closed for modification
+}
+
+registerPayment('card', cardPayment);
+registerPayment('paypal', paypalPayment);
+registerPayment('klarna', klarnaPayment);  // extension, no edits
+```
+
+## L — Liskov Substitution
+
+A subtype must honour its parent's contract. In frameworks this bites with
+base page classes:
+
+```ts
+class BasePage {
+  // Contract: resolves when the page is ready for interaction
+  async waitUntilReady(): Promise<void> {
+    await this.page.waitForLoadState('domcontentloaded');
+  }
+}
+
+// ❌ Violates the contract — "ready" now means something weaker
+class FlakyDashboard extends BasePage {
+  override async waitUntilReady(): Promise<void> {
+    // returns immediately; widgets still loading
+  }
+}
+```
+
+Every caller of `waitUntilReady()` now gets different guarantees depending
+on the concrete page — the bug appears far from its cause. If a subclass
+can't honour the contract, the hierarchy is wrong: compose instead.
+
+## I — Interface Segregation
+
+Don't force consumers to depend on methods they don't use:
+
+```ts
+// ❌ Fat interface — the smoke test needs goto() but must mock everything
+interface FullPage {
+  goto(): Promise<void>;
+  fillForm(data: FormData): Promise<void>;
+  submitAndWait(): Promise<void>;
+  exportToPdf(): Promise<Buffer>;
+}
+
+// ✅ Segregated — depend on what you use
+interface Navigable { goto(): Promise<void> }
+interface FormCapable { fillForm(data: FormData): Promise<void> }
+
+function smokeCheck(p: Navigable) { /* only needs goto */ }
+```
+
+## D — Dependency Inversion
+
+Depend on abstractions, not concretions. The framework's flows should not
+know which environment, browser, or data source they run against:
+
+```ts
+// Abstraction
+interface UserSource {
+  getUser(role: string): Promise<User>;
+}
+
+// Concretions — swappable without touching flows
+class ApiUserSource implements UserSource { /* creates via API */ }
+class StaticUserSource implements UserSource { /* reads fixtures file */ }
+
+// The flow depends on the interface; fixtures inject the right one
+export const test = base.extend<{ users: UserSource }>({
+  users: async ({}, use) => {
+    const source = process.env.CI ? new ApiUserSource() : new StaticUserSource();
+    await use(source);
+  },
+});
+```
+
+<Tip>SOLID in one test-framework sentence: small single-purpose units (S), extended via registration not modification (O), with subtypes that keep promises (L), narrow interfaces (I), wired through fixtures against abstractions (D).</Tip>
+
+## Try it: spotting the violation
+
+<TsPlayground
+  client:only="react"
+  label="SOLID — Playground"
+  height={400}
+  starter={`// Open/Closed + Dependency Inversion, runnable demo
+
+// Abstraction (D): report consumers depend on this, not on concrete reporters
+interface Reporter {
+  name: string;
+  report(passed: number, failed: number): string;
+}
+
+// Concretions — each new reporter is an EXTENSION (O), no existing code edited
+const consoleReporter: Reporter = {
+  name: 'console',
+  report: (p, f) => \`\${p} passed, \${f} failed\`,
+};
+
+const markdownReporter: Reporter = {
+  name: 'markdown',
+  report: (p, f) => \`| passed | failed |\\n|---|---|\\n| \${p} | \${f} |\`,
+};
+
+const emojiReporter: Reporter = {
+  name: 'emoji',
+  report: (p, f) => '✅'.repeat(p) + '❌'.repeat(f),
+};
+
+// The suite depends only on the abstraction
+class TestSuite {
+  constructor(private reporter: Reporter) {}
+
+  run(): void {
+    const passed = 7, failed = 2;
+    console.log(\`[\${this.reporter.name}]\`);
+    console.log(this.reporter.report(passed, failed));
+    console.log('---');
+  }
+}
+
+// Swap behaviour by injection — TestSuite never changes
+[consoleReporter, markdownReporter, emojiReporter].forEach(r =>
+  new TestSuite(r).run()
+);
+`}
+/>
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="fw-solid" questions={[
+  {
+    q: "Give a concrete Single Responsibility violation you'd expect in a test framework, and its fix.",
+    a: "A page object that also generates test data, calls APIs, and validates the database — four reasons to change in one class. Fix: page object keeps UI interactions only; test data moves to builders, API calls to client classes, db checks to a repository — each injected via fixtures where needed.",
+    senior: "The S violation usually arrives gradually — 'just one helper method' at a time — so I enforce it with review heuristics rather than rules: if a page object imports a database driver or an HTTP client, the PR gets flagged. Directory structure helps too: a page object living in src/pages/ that imports from src/api/ is visible in the import path itself."
+  },
+  {
+    q: "How does Liskov Substitution apply to base page classes?",
+    a: "A subclass overriding a base method must keep the base's contract. If BasePage.waitUntilReady() promises 'page interactive when resolved' and a subclass overrides it to return immediately, every generic utility trusting that contract breaks — only on that page, far from the cause. If a subclass can't honour the contract, composition is the right structure instead of inheritance.",
+    senior: "This is why deep BasePage hierarchies rot: each level adds overrides until nobody can state what any method guarantees. My rule for frameworks: inheritance at most one level deep, contracts documented on the base method, and anything page-specific expressed as composition. The L violations disappear when there's nothing to override."
+  },
+  {
+    q: "Show Dependency Inversion in a Playwright framework without a DI library.",
+    a: "Define an interface for the dependency (UserSource with getUser()), implement it per backing store (ApiUserSource, StaticUserSource), and let a fixture choose the implementation — flows and tests depend only on the interface. Playwright's test.extend is the injection mechanism; no container library needed.",
+    senior: "The payoff shows at environment boundaries: CI uses ApiUserSource against a seeded service, local dev uses StaticUserSource offline, a perf rig uses a pooled source — zero changes to tests. Inversion also makes the framework testable: you can unit test a flow against an in-memory fake, which is how you keep framework bugs from masquerading as product bugs."
+  },
+]} />
