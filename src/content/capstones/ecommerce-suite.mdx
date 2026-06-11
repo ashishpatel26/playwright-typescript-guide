@@ -1,0 +1,176 @@
+---
+title: "E-Commerce Test Suite"
+description: "A full Playwright test suite for a Next.js / Stripe e-commerce platform — POM, fixtures, API helpers, visual regression, and sharded CI."
+stack:
+  - Playwright
+  - TypeScript
+  - Stripe Test Mode
+  - Docker
+  - GitHub Actions
+order: 1
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Business Context
+
+A 50,000 SKU e-commerce platform requires a test suite that keeps CI feedback under 15 minutes on every PR, guarantees zero checkout regressions reaching production, and maintains visual snapshots of the product listing page to catch layout drift. The platform is built on Next.js with Stripe for payments, served from Docker containers, and deployed via GitHub Actions.
+
+Goals:
+- PR gate completes in **< 15 minutes** across sharded agents
+- Checkout flow protected by dedicated regression suite
+- Visual snapshot baseline for product listing page updated on release branches only
+
+## Architecture Overview
+
+| Layer | Responsibility |
+|---|---|
+| **Page Object Model** | One class per page — ProductPage, CartPage, CheckoutPage, AccountPage |
+| **API Fixtures** | Create / delete products, orders, and users via REST before each test |
+| **Auth Fixture** | `storageState` persisted per role (guest, registered, admin) |
+| **Stripe Fixture** | Wraps Stripe test-mode API; creates payment methods and confirms intents |
+| **Visual Specs** | Percy / Playwright snapshots for product listing at desktop + mobile viewports |
+| **Sharding** | 4 GitHub Actions matrix shards; blob reporter merges results |
+
+All test data is API-created and API-deleted — no shared fixtures, no seed SQL files.
+
+## Framework Structure
+
+```
+e2e/
+├── pages/
+│   ├── ProductPage.ts
+│   ├── CartPage.ts
+│   ├── CheckoutPage.ts
+│   └── AccountPage.ts
+├── fixtures/
+│   ├── auth.fixture.ts
+│   ├── stripe.fixture.ts
+│   └── product.fixture.ts
+├── utils/
+│   ├── api-client.ts
+│   └── test-data.ts
+├── visual/
+│   └── product-listing.spec.ts
+├── functional/
+│   ├── checkout.spec.ts
+│   ├── cart.spec.ts
+│   └── search.spec.ts
+├── global-setup.ts
+└── playwright.config.ts
+```
+
+## Key Implementation Patterns
+
+**storageState auth fixture** — authenticate once, reuse across all tests in the worker:
+
+```ts
+// fixtures/auth.fixture.ts
+import { test as base, Page } from '@playwright/test';
+
+type AuthFixtures = { authenticatedPage: Page };
+
+export const test = base.extend<AuthFixtures>({
+  authenticatedPage: async ({ browser }, use) => {
+    const context = await browser.newContext({
+      storageState: 'e2e/.auth/user.json',
+    });
+    const page = await context.newPage();
+    await use(page);
+    await context.close();
+  },
+});
+```
+
+**Stripe iframe handling** — `frameLocator` targets the Stripe Elements iframe by name pattern:
+
+```ts
+// pages/CheckoutPage.ts
+async fillCard(cardNumber: string, expiry: string, cvc: string) {
+  const stripeFrame = this.page
+    .frameLocator('iframe[name*="__privateStripeFrame"]')
+    .first();
+  await stripeFrame.getByPlaceholder('Card number').fill(cardNumber);
+  await stripeFrame.getByPlaceholder('MM / YY').fill(expiry);
+  await stripeFrame.getByPlaceholder('CVC').fill(cvc);
+}
+```
+
+**API-based test data setup** — product created before test, deleted in teardown:
+
+```ts
+// fixtures/product.fixture.ts
+export const test = base.extend<{ testProduct: Product }>({
+  testProduct: async ({ request }, use) => {
+    const client = new ApiClient(request);
+    const product = await client.createProduct({
+      name: 'Test Widget',
+      price: 2999,
+      stock: 10,
+    });
+    await use(product);
+    await client.deleteProduct(product.id);
+  },
+});
+```
+
+**Network failure simulation** — `page.route()` blocks payment endpoint to test error UI:
+
+```ts
+test('shows error when payment network fails', async ({ page }) => {
+  await page.route('**/api/payment/confirm', route =>
+    route.abort('failed')
+  );
+  await checkoutPage.submitOrder();
+  await expect(page.getByRole('alert')).toContainText('Payment failed');
+});
+```
+
+## CI/CD Integration
+
+```yaml
+# .github/workflows/playwright.yml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      - run: npm ci
+      - run: npx playwright install --with-deps
+      - run: npx playwright test --shard=${{ matrix.shard }}/4
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blob-report-${{ matrix.shard }}
+          path: blob-report/
+
+  merge-reports:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: all-blob-reports/
+          pattern: blob-report-*
+          merge-multiple: true
+      - run: npx playwright merge-reports --reporter html ./all-blob-reports
+      - uses: actions/upload-artifact@v4
+        with:
+          name: html-report
+          path: playwright-report/
+```
+
+4 shards run in parallel; blob reports are merged into a single HTML artifact. The `STRIPE_SECRET_KEY` secret is injected only in CI — local runs use a `.env` file excluded from version control.
+
+<QuizCard client:only="react" storageKey="cap-ecommerce" questions={[
+  { q: "Why use storageState for authentication rather than logging in inside every test?", a: "storageState persists cookies and localStorage to a JSON file after a single login. Subsequent tests load that file into a new browser context instead of repeating the login UI flow. This removes the login round-trip from every test, cutting overall suite time significantly and eliminating flakiness caused by the auth UI itself." },
+  { q: "How does frameLocator differ from regular locators when interacting with Stripe Elements?", a: "Stripe Elements renders card inputs inside a cross-origin iframe. Regular locators can't pierce iframe boundaries. frameLocator('iframe[name*=\"__privateStripeFrame\"]') creates a locator scoped to that iframe's DOM, so subsequent getByPlaceholder or getByRole calls resolve inside the iframe rather than the host page." },
+  { q: "What is the purpose of the blob reporter in a sharded GitHub Actions matrix?", a: "Each shard writes a compact binary blob report of its results rather than a full HTML report. After all shards complete, the merge-reports step combines all blob files into a single unified HTML report. This avoids 4 separate partial reports and gives a complete picture of the run — pass/fail counts, traces, screenshots — in one artifact." }
+]} />

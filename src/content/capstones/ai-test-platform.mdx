@@ -1,0 +1,208 @@
+---
+title: "AI-Powered QE Platform"
+description: "An agentic test platform using Claude Code and Playwright MCP — auto-generate tests from specs, self-heal broken selectors, and maintain a living test suite."
+stack:
+  - Playwright MCP
+  - Claude Code
+  - "@anthropic-ai/sdk"
+  - TypeScript
+  - GitHub Actions
+order: 4
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Business Context
+
+An internal QE platform removes the manual cost of test authoring and maintenance. When a developer opens a PR for a new feature, the platform audits which user journeys lack coverage, generates candidate tests from the feature spec and Figma design, and posts a PR comment with the delta. When a nightly run fails due to a selector change, a healing workflow runs Claude with the failing test and a browser screenshot, proposes a selector fix, and opens a PR.
+
+Goals:
+- **Test generation**: new features get Playwright specs generated from their design specs automatically
+- **Selector healing**: broken selectors are fixed by Claude without human intervention
+- **Coverage audit**: gaps in journey coverage surface as PR comments before merge
+- **Convention enforcement**: `CLAUDE.md` in the repo root teaches Claude the project's selector rules
+
+## Architecture Overview
+
+| Layer | Responsibility |
+|---|---|
+| **Playwright MCP server** | Gives Claude browser navigation, click, fill, and screenshot tools |
+| **Spec reader MCP tool** | Custom tool: reads feature specs from Notion / Confluence by page ID |
+| **Figma reader MCP tool** | Custom tool: fetches component tree from Figma API for selector hints |
+| **Coverage audit script** | Compares known user journeys list against test file coverage; outputs gaps |
+| **CLAUDE.md conventions** | Selector rules, storageKey uniqueness, no `waitForTimeout`, POM structure |
+| **Generated vs curated split** | `e2e/generated/` for AI output; `e2e/curated/` for hand-written tests |
+
+## Framework Structure
+
+```
+.claude/
+│   └── CLAUDE.md
+mcp/
+│   ├── spec-reader.ts
+│   └── figma-reader.ts
+workflows/
+│   ├── generate-tests.yml
+│   └── heal-selectors.yml
+e2e/
+│   ├── generated/
+│   └── curated/
+scripts/
+│   └── audit-coverage.ts
+playwright.config.ts
+```
+
+## Key Implementation Patterns
+
+**CLAUDE.md project conventions** — teaches Claude what good tests look like in this repo:
+
+```markdown
+# Playwright Test Conventions
+
+## Selector rules
+- Prefer getByRole() and getByTestId() — never CSS classes or XPath
+- data-testid attributes follow kebab-case: `data-testid="checkout-button"`
+- Never use nth() with index > 0; add data-testid to disambiguate instead
+
+## Test structure
+- All pages have a matching Page Object in e2e/curated/pages/
+- storageKey must be globally unique — check existing specs before adding
+- No waitForTimeout() — use expect(...).toBeVisible() or waitForURL()
+
+## File placement
+- Generated tests go in e2e/generated/ — do not edit manually
+- Curated tests go in e2e/curated/ — these are the source of truth
+```
+
+**Coverage audit script** — diffs journey list against test coverage:
+
+```ts
+// scripts/audit-coverage.ts
+import { readdir, readFile } from 'fs/promises';
+
+const KNOWN_JOURNEYS = [
+  'user-registration',
+  'password-reset',
+  'checkout-guest',
+  'checkout-registered',
+  'order-cancellation',
+  'subscription-upgrade',
+];
+
+async function getTestedJourneys(): Promise<string[]> {
+  const files = await readdir('e2e', { recursive: true });
+  const specs = files.filter(f => f.endsWith('.spec.ts'));
+  const covered: string[] = [];
+  for (const spec of specs) {
+    const content = await readFile(`e2e/${spec}`, 'utf8');
+    for (const journey of KNOWN_JOURNEYS) {
+      if (content.includes(journey)) covered.push(journey);
+    }
+  }
+  return [...new Set(covered)];
+}
+
+const covered = await getTestedJourneys();
+const gaps = KNOWN_JOURNEYS.filter(j => !covered.includes(j));
+console.log(JSON.stringify({ covered, gaps }, null, 2));
+process.exit(gaps.length > 0 ? 1 : 0);
+```
+
+**Selector healing via Claude SDK**:
+
+```ts
+// scripts/heal-selector.ts
+import Anthropic from '@anthropic-ai/sdk';
+
+const client = new Anthropic();
+
+async function healSelector(failingTest: string, screenshot: string): Promise<string> {
+  const message = await client.messages.create({
+    model: 'claude-opus-4-5',
+    max_tokens: 1024,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: `This Playwright test is failing. Fix only the broken selector.\n\n${failingTest}` },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: screenshot } },
+      ],
+    }],
+  });
+  return (message.content[0] as { text: string }).text;
+}
+```
+
+**Generated vs curated separation** — Playwright config runs both but reports them separately:
+
+```ts
+// playwright.config.ts
+export default defineConfig({
+  projects: [
+    {
+      name: 'curated',
+      testDir: './e2e/curated',
+    },
+    {
+      name: 'generated',
+      testDir: './e2e/generated',
+      retries: 2, // generated tests get extra retries
+    },
+  ],
+});
+```
+
+## CI/CD Integration
+
+```yaml
+# workflows/generate-tests.yml  — triggered on PR open
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  coverage-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npx ts-node scripts/audit-coverage.ts > gaps.json
+      - name: Comment PR with gaps
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const gaps = require('./gaps.json');
+            if (gaps.gaps.length) {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## Test Coverage Gaps\nThe following journeys have no tests:\n${gaps.gaps.map(g => `- ${g}`).join('\n')}`,
+              });
+            }
+
+# workflows/heal-selectors.yml  — triggered nightly on failure
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 3am nightly after regression run
+
+jobs:
+  heal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npx playwright test --reporter=json > results.json || true
+      - run: npx ts-node scripts/heal-selector.ts
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          title: 'fix: auto-healed selectors from nightly run'
+          branch: 'auto-heal/nightly'
+```
+
+<QuizCard client:only="react" storageKey="cap-ai" questions={[
+  { q: "Why are generated tests kept in a separate directory from curated tests?", a: "Generated tests may contain errors, fragile selectors, or incomplete coverage. Keeping them in e2e/generated/ signals to the team that they require review before promotion. The Playwright config can apply different retry counts, tags, or reporter settings to each directory. Promotion to e2e/curated/ is a deliberate human act — it's the quality gate." },
+  { q: "What role does CLAUDE.md play in AI test generation quality?", a: "CLAUDE.md is a persistent instruction file that Claude reads at the start of every session. It encodes the repo's selector conventions, file placement rules, naming patterns, and anti-patterns. Without it, Claude would generate valid Playwright code that violates project standards — using CSS selectors, wrong directories, or waitForTimeout. CLAUDE.md is the prompt engineering layer baked into the repository." },
+  { q: "How does the coverage audit script avoid false negatives when checking journey coverage?", a: "The audit checks whether a journey identifier string appears anywhere in a spec file — including in describe() labels, test() names, and comments. This is a conservative heuristic: a journey is considered covered if any spec file references its identifier. The source of truth is the KNOWN_JOURNEYS constant, which the QE lead maintains alongside the product's user journey map." }
+]} />

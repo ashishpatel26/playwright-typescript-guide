@@ -1,0 +1,107 @@
+---
+title: "E-Learning Platform"
+description: "Test strategies for course catalogues, video lessons, quizzes, progress tracking, certificates, and instructor dashboards."
+features:
+  - Course catalogue & search
+  - Video lessons
+  - Quizzes & assessments
+  - Progress tracking
+  - Certificates
+  - Instructor dashboard
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+E-learning platforms have two user types (learner and instructor) with different journeys. Progress tracking must be accurate (completion percentage, quiz scores). Video lessons have playback, resume, and completion events. Certificates need to be generated correctly. Accessibility is important — many learners have disabilities.
+
+**Typical stack:** React / Vue frontend, video via Vimeo or self-hosted HLS, LMS backend (custom or Moodle), PDF certificate generation, payment for paid courses.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Catalogue** | Search, filter by topic/level/duration, enrol, free vs paid | Wrong course served, paywall bypass |
+| **Video lessons** | Play, pause, seek, resume, completion event, captions | Progress not recorded, fake completion |
+| **Quiz** | Multiple choice, time limit, submit, score, retry | Wrong score, timer exploit |
+| **Progress** | Course %, lesson completion, streak, certificate unlock | Inaccurate progress, premature certificate |
+| **Instructor** | Upload content, publish, view analytics, respond to questions | Broken publish flow, lost student data |
+| **Certificates** | Generate on 100% completion, PDF download, shareable link | Wrong name/course, premature issue |
+
+## Test Pyramid for E-Learning
+
+```
+Unit (55%):        Quiz scoring, progress calculation, certificate eligibility
+Integration (35%): Video completion events, certificate generation, payment
+E2E (10%):         Enrol → complete lesson → take quiz → download certificate
+```
+
+## Common Failure Scenarios
+
+```
+1. Video completion event fires on skip to end (not watched)
+   Test: dispatch 'ended' event via page.evaluate without playing, assert progress NOT marked complete
+
+2. Quiz timer continues after submission (UI bug)
+   Test: submit quiz, assert timer element is removed or stopped from the DOM
+
+3. Certificate generated with wrong course name
+   Test: complete course, download PDF, extract text, assert course title matches enrolled course
+
+4. Progress percentage rounds to 100% before all lessons complete
+   Test: complete all lessons minus one, assert progress < 100% and certificate button is disabled
+
+5. Course available without payment if URL guessed
+   Test: obtain lesson URL without enrolling, assert redirect to enrol/paywall page
+```
+
+## Playwright Patterns for E-Learning
+
+```ts
+// Video completion via page.evaluate dispatching 'ended' event
+test('lesson only marked complete on actual ended event', async ({ page }) => {
+  await page.goto('/course/intro-to-playwright/lesson/1');
+  // Skipping to end should NOT mark complete — only the 'ended' event should
+  await page.evaluate(() => {
+    const video = document.querySelector('video');
+    video.currentTime = video.duration - 1;
+    // Do NOT dispatch 'ended' — verify progress is still incomplete
+  });
+  await expect(page.getByTestId('lesson-complete-badge')).not.toBeVisible();
+
+  // Now dispatch 'ended' to simulate legitimate completion
+  await page.evaluate(() => {
+    document.querySelector('video').dispatchEvent(new Event('ended'));
+  });
+  await expect(page.getByTestId('lesson-complete-badge')).toBeVisible();
+});
+
+// Quiz time limit with page.clock.fastForward
+test('quiz auto-submits when time expires', async ({ page }) => {
+  await page.clock.install();
+  await page.goto('/course/intro-to-playwright/quiz/1');
+  await expect(page.getByTestId('quiz-timer')).toBeVisible();
+  // Fast-forward past the quiz time limit (e.g. 10 minutes)
+  await page.clock.fastForward(10 * 60 * 1000);
+  await expect(page.getByTestId('quiz-result')).toBeVisible();
+  await expect(page.getByTestId('quiz-timer')).not.toBeVisible();
+});
+
+// Certificate PDF download
+test('certificate downloads after course completion', async ({ page }) => {
+  await page.goto('/course/intro-to-playwright/certificate');
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Download Certificate' }).click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/certificate.*\.pdf$/i);
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-education" questions={[
+  { q: "Why is it dangerous to mark a video lesson complete when a user skips to the end, and how do you write a test that distinguishes legitimate completion from a skip?", a: "Skipping to the end fires a 'timeupdate' event and sets currentTime near duration, but the 'ended' event only fires after the video plays through. Test by setting video.currentTime to near-duration via page.evaluate (without dispatching 'ended') and asserting the lesson is NOT marked complete. Then dispatch the 'ended' event explicitly and assert it IS marked complete. This proves the backend listens for the correct event, not just a currentTime value." },
+  { q: "How do you test a quiz time limit without waiting for the actual countdown to expire?", a: "Use page.clock.install() to take control of the browser clock, then call page.clock.fastForward(ms) to jump past the time limit instantly. Assert the quiz auto-submits (result panel visible, timer removed from DOM). This makes the test deterministic and fast regardless of the configured limit." },
+  { q: "What test ensures a course cannot be accessed without payment even if the lesson URL is known?", a: "Obtain a direct lesson URL (from a legitimately enrolled account or the app source). Then open it in a fresh browser context with no authentication or payment session. Assert the response is a redirect to the enrol/paywall page — not the lesson content. Also assert via API (using page.route to intercept) that the lesson content endpoint returns 401 or 403, not 200 with content, so a hidden API call can't bypass the UI guard." }
+]} />

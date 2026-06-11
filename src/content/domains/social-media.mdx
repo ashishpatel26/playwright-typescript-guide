@@ -1,0 +1,107 @@
+---
+title: "Social Media Platform"
+description: "Test strategies for feeds, post creation, reactions, comments, direct messaging, notifications, and content moderation."
+features:
+  - Feed rendering
+  - Post creation & media upload
+  - Reactions & comments
+  - Direct messaging
+  - Notifications
+  - Content moderation
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+Social media platforms combine high-concurrency real-time features (feeds, DMs, notifications) with rich media pipelines (image/video upload, transcoding) and safety systems (moderation, reporting). Testing must handle eventual consistency, WebSocket-driven updates, and complex user-interaction graphs.
+
+**Typical stack:** React / Vue SPA, GraphQL or REST API, Redis pub/sub for real-time, S3-compatible object storage with CDN, background job queue for media processing.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Feed** | Infinite scroll, chronological vs algorithmic order, empty state, sponsored posts | Duplicate posts, broken pagination |
+| **Post creation** | Text, image upload, video, hashtags, mentions, character limit | Media not attached, silent failure |
+| **Engagement** | Like, comment, share, reply threading, nested comment depth | Wrong counts, broken threads |
+| **Direct messaging** | Real-time delivery, read receipts, media in DMs, group DMs | Message lost, wrong recipient |
+| **Notifications** | Push, in-app badge, email digest, mark-all-read | Stale badge count, duplicate alerts |
+| **Moderation** | Report content, hide, appeal decision, escalate | Harmful content stays up, false positive |
+
+## Test Pyramid for Social Media
+
+```
+Unit (60%):   Feed ranking algorithm, character count, mention parsing, notification rules
+Integration (30%): Upload pipeline, push notification dispatch, moderation queue API
+E2E (10%):    Create post → see in feed → receive notification → DM author
+```
+
+**Critical E2E tests (must pass before every deploy):**
+1. Create a text post and verify it appears in follower's feed
+2. Upload an image, verify it renders correctly in the post
+3. Send a DM, verify delivery and read receipt
+4. Report a post, verify it enters moderation queue
+5. Notification badge decrements after reading notifications
+
+## Common Failure Scenarios
+
+```
+1. Feed duplicates posts on infinite scroll pagination boundary
+   Test: scroll to page boundary, continue scrolling, assert no duplicate post IDs in DOM
+
+2. Image upload succeeds but preview broken (CORS or presigned URL expiry)
+   Test: upload image, intercept the presigned URL request, verify img src loads (no 403/CORS error)
+
+3. Notification badge count doesn't reset on read
+   Test: generate notification, read it, assert badge count is 0 not prior value
+
+4. Mention autocomplete doesn't work with special characters in username
+   Test: type '@user.name-test', assert autocomplete suggestion appears and resolves correctly
+
+5. DM delivered to wrong user in a group context
+   Test: two-context test — user A sends DM to user B in a group; assert user C's DM inbox is empty
+```
+
+## Playwright Patterns for Social Media
+
+```ts
+// Infinite scroll — scroll and wait for API response
+test('feed loads more posts on scroll without duplicates', async ({ page }) => {
+  const seenIds = new Set<string>();
+  await page.goto('/feed');
+  // Collect initial post IDs
+  const initialPosts = await page.locator('[data-post-id]').all();
+  for (const post of initialPosts) {
+    seenIds.add(await post.getAttribute('data-post-id') ?? '');
+  }
+  // Trigger next page load
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await page.waitForResponse('**/api/feed*');
+  const allPosts = await page.locator('[data-post-id]').all();
+  for (const post of allPosts) {
+    const id = await post.getAttribute('data-post-id') ?? '';
+    expect(seenIds.has(id) && allPosts.indexOf(post) >= initialPosts.length).toBe(false);
+  }
+});
+
+// Mock WebSocket for real-time DM test
+test('DM appears instantly via WebSocket', async ({ page }) => {
+  await page.goto('/messages/thread/42');
+  // Inject a mock WS message after page load
+  await page.evaluate(() => {
+    const event = new MessageEvent('message', {
+      data: JSON.stringify({ type: 'new_message', id: 'msg-99', text: 'Hello from mock', senderId: 7 })
+    });
+    (window as any).__mockWsDispatch?.(event);
+  });
+  await expect(page.getByTestId('message-msg-99')).toBeVisible();
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-social" questions={[
+  { q: "How do you reliably test infinite scroll without flakiness in Playwright?", a: "Await an explicit network response after scrolling — use page.waitForResponse('**/api/feed*') immediately after the scroll action. Never rely on a fixed timeout. Then assert post IDs using data attributes collected before scrolling to detect duplicates or missing items at the pagination boundary." },
+  { q: "What is the best approach to test real-time WebSocket features like DMs in Playwright?", a: "Inject mock WebSocket messages via page.evaluate() by dispatching synthetic MessageEvent objects to the app's WebSocket handler. This avoids standing up a real WS server in the test environment while still exercising the UI's message-handling and rendering code. For send-side tests, intercept the WebSocket frame with page.on('websocket', ...) and assert the correct payload was sent." },
+  { q: "A notification badge shows '3' after the user reads all notifications. What should the test assert and why?", a: "Assert the badge element either has text '0', is hidden (aria-hidden or display:none), or is removed from the DOM — depending on the design spec. Use a soft assertion or waitFor to account for async server-side state update. Also verify the API PATCH/POST to mark-as-read was called (via page.waitForRequest) so you confirm the state was persisted, not just visually cleared." }
+]} />

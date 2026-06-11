@@ -1,0 +1,105 @@
+---
+title: "E-Commerce"
+description: "Test strategies for shopping carts, checkout flows, product search, payments, and order management in retail platforms."
+features:
+  - Product search & filtering
+  - Shopping cart & checkout
+  - Payment processing
+  - Order management
+  - Inventory & stock
+  - User accounts & wishlists
+demoSite:
+  name: "SauceDemo"
+  url: "https://www.saucedemo.com"
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+E-commerce is the highest-stakes domain for automated testing — a checkout bug directly costs revenue. Testing covers the full purchase funnel: product discovery → cart → checkout → payment → confirmation → order tracking.
+
+**Typical stack:** Next.js / Nuxt storefront, Stripe / Braintree payments, microservices (cart, inventory, orders, notifications), CDN-delivered product images.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Product search** | Filters, pagination, sorting, empty results | Discovery failure → lost sale |
+| **Product detail** | Images, variants (size/colour), stock status, add-to-cart | Wrong variant ordered |
+| **Cart** | Add, remove, quantity update, price calculation, persistence | Price error, lost cart |
+| **Checkout** | Address form, shipping selection, discount codes | Drop-off, wrong address |
+| **Payment** | Card validation, 3DS redirect, failure handling | Revenue loss, double charge |
+| **Order confirmation** | Email trigger, inventory decrement, order record | Fulfilment failure |
+| **Account** | Registration, login, order history, saved addresses | Data exposure |
+
+## Test Pyramid for E-Commerce
+
+```
+Unit (60%):   Price calculation, discount logic, tax rules, validation
+Integration (30%): Cart API, payment gateway integration, inventory service
+E2E (10%):    Critical path: login → search → add to cart → checkout → confirm
+```
+
+**Critical E2E tests (must pass before every deploy):**
+1. Guest checkout with credit card
+2. Registered user checkout with saved address
+3. Apply discount code, verify price
+4. Out-of-stock product blocks checkout
+5. Payment failure shows error, no order created
+
+## Common Failure Scenarios
+
+```
+1. Race condition: two users buy last item simultaneously → oversell
+   Test: concurrent checkout API calls, assert only one succeeds
+
+2. Cart total doesn't update after discount → user sees wrong price
+   Test: apply coupon, verify cart total, verify order total match
+
+3. 3DS redirect returns to wrong URL → order stuck in pending
+   Test: mock 3DS with Stripe test card 4000002500003155
+
+4. Address autocomplete submits before user finishes → wrong delivery
+   Test: partial address entry, intercept autocomplete, verify confirmation
+
+5. Inventory not decremented after payment → stock integrity broken
+   Test: verify inventory API after successful order
+```
+
+## Playwright Patterns for E-Commerce
+
+```ts
+// Payment with Stripe test cards via page.route()
+test('checkout completes with test card', async ({ page }) => {
+  await page.goto('/checkout');
+  // Fill Stripe Elements iframe
+  const stripeFrame = page.frameLocator('iframe[name*="stripe"]').first();
+  await stripeFrame.getByPlaceholder('Card number').fill('4242424242424242');
+  await stripeFrame.getByPlaceholder('MM / YY').fill('12/28');
+  await stripeFrame.getByPlaceholder('CVC').fill('123');
+  await page.getByRole('button', { name: 'Place order' }).click();
+  await expect(page.getByText('Order confirmed')).toBeVisible();
+});
+
+// Cart persistence across sessions
+test('cart persists after logout and login', async ({ page, context }) => {
+  await page.goto('/products');
+  await page.locator('.product-card').first().getByRole('button', { name: 'Add to cart' }).click();
+
+  // Save cookies, new page (simulates new session)
+  const cookies = await context.cookies();
+  await context.clearCookies();
+  await context.addCookies(cookies);
+
+  await page.reload();
+  await expect(page.locator('.cart-count')).toHaveText('1');
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-ecommerce" questions={[
+  { q: "What is the most critical E2E test to run before every e-commerce deployment?", a: "The complete guest checkout flow: browse → add to cart → enter address → enter payment → confirm order. This end-to-end path touches every service (product, cart, payment, order, inventory) and is the primary revenue path. A failure here is an immediate production incident." },
+  { q: "How do you test payment failure scenarios without a real card decline?", a: "Use payment provider test cards designed for specific failure modes. Stripe provides cards for declined (4000000000000002), insufficient funds (4000000000009995), 3DS required (4000002500003155), and network errors. Mock via page.route() for failure scenarios the test card list doesn't cover." },
+  { q: "What race condition is unique to e-commerce and how do you test it?", a: "Oversell: two concurrent users buy the last item. Test by firing two simultaneous checkout requests via APIRequestContext in parallel (Promise.all), then asserting the inventory API shows 0 and exactly one order was created. The second should receive a 409 or out-of-stock error." }
+]} />

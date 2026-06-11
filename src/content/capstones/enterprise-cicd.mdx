@@ -1,0 +1,231 @@
+---
+title: "Enterprise CI/CD Pipeline"
+description: "A production CI/CD test pipeline for a large enterprise — parallel sharding, multi-environment promotion, visual regression gates, and Slack reporting."
+stack:
+  - Playwright
+  - GitHub Actions
+  - Docker
+  - Percy
+  - Slack API
+  - Allure
+order: 5
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Business Context
+
+An enterprise runs 2,000+ E2E tests across four teams (core, payments, catalog, shared) and four environments (dev, staging, UAT, prod). Any team's tests can block any other team's release if not partitioned correctly. The pipeline must keep PR feedback under 12 minutes, give visual regression sign-off before UAT promotion, notify on-call engineers in Slack when a nightly run degrades, and produce Allure reports that team leads can share with stakeholders.
+
+Goals:
+- **PR gate < 12 minutes** — smoke only, only the affected team's tests
+- **Nightly full regression** — all 2,000+ tests across 8 shards
+- **Visual gate on staging** — Percy snapshot approval before UAT promotion
+- **Slack notifications** — failure summary with direct link to Allure report
+- **Multi-team ownership** — CODEOWNERS enforces review; Playwright projects partition test runs
+
+## Architecture Overview
+
+| Layer | Responsibility |
+|---|---|
+| **Team namespaces** | `e2e/core/`, `e2e/payments/`, `e2e/catalog/`, `e2e/shared/` |
+| **Playwright projects** | One project per team in `playwright.config.ts`; each has its own `testDir` |
+| **PR smoke gate** | 4-shard matrix, `--grep @smoke`, path-filtered to changed team only |
+| **Nightly regression** | 8-shard matrix, all projects, full suite |
+| **Percy visual gate** | Runs against staging; blocks UAT promotion workflow until approved |
+| **Allure server** | Receives reports from all runs; history trend visible across branches |
+| **Slack notifier** | `scripts/slack-notify.ts` posts failure summary + report URL on non-zero exit |
+
+## Framework Structure
+
+```
+e2e/
+├── core/
+├── payments/
+├── catalog/
+└── shared/
+playwright.config.ts
+.github/
+└── workflows/
+    ├── pr-smoke.yml
+    ├── nightly-regression.yml
+    ├── visual-gate.yml
+    └── promote-to-uat.yml
+scripts/
+├── slack-notify.ts
+└── allure-upload.ts
+```
+
+## Key Implementation Patterns
+
+**Multi-team Playwright projects config** — each team's tests run in isolation:
+
+```ts
+// playwright.config.ts
+import { defineConfig } from '@playwright/test';
+
+const TEST_ENV = process.env.TEST_ENV ?? 'staging';
+const BASE_URLS: Record<string, string> = {
+  dev: 'https://dev.internal.example.com',
+  staging: 'https://staging.example.com',
+  uat: 'https://uat.example.com',
+  prod: 'https://www.example.com',
+};
+
+export default defineConfig({
+  use: {
+    baseURL: BASE_URLS[TEST_ENV],
+  },
+  projects: [
+    { name: 'core',     testDir: './e2e/core',     grep: /@smoke|@regression/ },
+    { name: 'payments', testDir: './e2e/payments',  grep: /@smoke|@regression/ },
+    { name: 'catalog',  testDir: './e2e/catalog',   grep: /@smoke|@regression/ },
+    { name: 'shared',   testDir: './e2e/shared',    grep: /@smoke|@regression/ },
+  ],
+});
+```
+
+**PR gate path filtering** — only runs the affected team's smoke tests:
+
+```yaml
+# .github/workflows/pr-smoke.yml
+jobs:
+  detect-team:
+    outputs:
+      team: ${{ steps.detect.outputs.team }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: detect
+        run: |
+          FILES=$(git diff --name-only origin/main)
+          if echo "$FILES" | grep -q "^e2e/payments"; then echo "team=payments" >> $GITHUB_OUTPUT
+          elif echo "$FILES" | grep -q "^e2e/catalog"; then echo "team=catalog" >> $GITHUB_OUTPUT
+          else echo "team=core" >> $GITHUB_OUTPUT
+          fi
+
+  smoke:
+    needs: detect-team
+    strategy:
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - run: npx playwright test --project=${{ needs.detect-team.outputs.team }}
+          --grep @smoke --shard=${{ matrix.shard }}/4
+        env:
+          TEST_ENV: staging
+```
+
+**Slack notification script** — posts failure summary with Allure report link:
+
+```ts
+// scripts/slack-notify.ts
+import { readFileSync } from 'fs';
+
+interface PlaywrightResults {
+  stats: { expected: number; unexpected: number };
+}
+
+const results: PlaywrightResults = JSON.parse(
+  readFileSync('test-results/results.json', 'utf8')
+);
+const { expected, unexpected } = results.stats;
+
+if (unexpected > 0) {
+  const allureUrl = process.env.ALLURE_REPORT_URL!;
+  const runUrl = process.env.GITHUB_SERVER_URL + '/' +
+    process.env.GITHUB_REPOSITORY + '/actions/runs/' +
+    process.env.GITHUB_RUN_ID;
+
+  await fetch(process.env.SLACK_WEBHOOK_URL!, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: `*Nightly regression failed* — ${unexpected} test(s) failed out of ${expected + unexpected}`,
+      blocks: [
+        { type: 'section', text: { type: 'mrkdwn',
+          text: `*Nightly regression failed*\n${unexpected} failed / ${expected + unexpected} total` }},
+        { type: 'actions', elements: [
+          { type: 'button', text: { type: 'plain_text', text: 'Allure Report' }, url: allureUrl },
+          { type: 'button', text: { type: 'plain_text', text: 'GitHub Run' }, url: runUrl },
+        ]},
+      ],
+    }),
+  });
+}
+```
+
+## CI/CD Integration
+
+```yaml
+# .github/workflows/nightly-regression.yml
+on:
+  schedule:
+    - cron: '0 1 * * *'
+
+jobs:
+  regression:
+    strategy:
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.52.0-jammy
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npx playwright test --shard=${{ matrix.shard }}/8
+          --reporter=blob
+        env:
+          TEST_ENV: staging
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blob-${{ matrix.shard }}
+          path: blob-report/
+
+  report-and-notify:
+    needs: regression
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: blob-*, merge-multiple: true, path: blobs/ }
+      - run: npx playwright merge-reports --reporter=json,html ./blobs
+      - run: npx ts-node scripts/allure-upload.ts
+      - run: npx ts-node scripts/slack-notify.ts
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          ALLURE_REPORT_URL: ${{ steps.allure.outputs.url }}
+
+# Promotion gate
+# .github/workflows/promote-to-uat.yml
+# Requires Percy visual approval before dispatching UAT deploy
+on:
+  workflow_dispatch:
+    inputs:
+      percy_build_id: { required: true }
+
+jobs:
+  check-percy:
+    steps:
+      - run: |
+          STATUS=$(curl -s -H "Authorization: Token $PERCY_TOKEN" \
+            https://percy.io/api/v1/builds/${{ inputs.percy_build_id }} \
+            | jq -r '.data.attributes.review-state')
+          if [ "$STATUS" != "approved" ]; then exit 1; fi
+        env:
+          PERCY_TOKEN: ${{ secrets.PERCY_TOKEN }}
+  deploy-uat:
+    needs: check-percy
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Deploying to UAT..."
+```
+
+The full pipeline progression is: PR → smoke (affected team, 4 shards) → merge → nightly → full regression (8 shards) → Percy visual gate approval → UAT promotion → prod smoke.
+
+<QuizCard client:only="react" storageKey="cap-cicd" questions={[
+  { q: "Why does the PR gate run only the affected team's tests rather than all smoke tests?", a: "Running all teams' smoke tests on every PR creates noise and latency unrelated to the change. Path filtering detects which team namespace was modified and runs only that project. This keeps the PR gate under 12 minutes even as the suite grows, and ensures the signal is relevant — a payments test failure on a catalog-only change is meaningless." },
+  { q: "What is the role of the Percy approval gate before UAT promotion?", a: "Percy captures visual snapshots of the application on staging and diffs them against the approved baseline. The promote-to-uat workflow queries the Percy API for the build's review-state before dispatching the UAT deploy. If reviewers haven't approved the visual diff — or if Percy detected unreviewed changes — the promotion is blocked. This prevents visual regressions from silently reaching UAT." },
+  { q: "Why is the TEST_ENV variable passed as an environment variable rather than hardcoded in playwright.config.ts?", a: "The same playwright.config.ts is used across all four environments. Hardcoding would require four config files or conditional branches that diverge over time. TEST_ENV at CI runtime selects the base URL from a map, so the same test binary runs against dev for smoke, staging for the visual gate, UAT for regression, and prod for the post-deploy smoke — with no code changes between runs." }
+]} />

@@ -1,0 +1,108 @@
+---
+title: "Online Gaming"
+description: "Test strategies for game lobbies, matchmaking, leaderboards, in-game purchases, anti-cheat, and live event systems."
+features:
+  - Game lobby & matchmaking
+  - Leaderboards & rankings
+  - In-game purchases
+  - Live events
+  - Anti-cheat controls
+  - Player profiles & progression
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+Online gaming has extreme performance sensitivity — latency matters in ways other domains do not. Real-money transactions (loot boxes, battle passes) and high-value accounts create significant fraud risk including account takeover for valuable items. Testing must cover real-time multiplayer state, WebSocket-driven lobby systems, and purchase flows that involve virtual currency intermediaries.
+
+**Typical stack:** Node.js or Go game server, Redis pub/sub for lobby state, WebSocket connections for real-time events, Stripe or platform billing for IAP, CDN-cached leaderboard snapshots.
+
+Test pyramid skews heavily toward API and integration for game logic — E2E is reserved only for critical purchase flows and lobby entry paths where UI bugs have direct revenue impact.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Lobby** | Create/join/leave room, player count limits, reconnect on drop | Players stuck outside game |
+| **Matchmaking** | Rank-based matching, wait time display, cancel mid-queue | Unfair matches, abandoned queues |
+| **Leaderboard** | Score update latency, tied ranks, pagination, seasonal reset | Incorrect rankings, cheating perception |
+| **Purchases** | Virtual currency, cosmetics, subscription, refund policy | Revenue loss, duplicate charge |
+| **Live events** | Time-gated content, countdown timer accuracy, reward claim | Players miss rewards, legal complaints |
+| **Anti-cheat** | Rate limiting on score submit, stat anomaly detection | Cheater infestation, player churn |
+
+## Test Pyramid for Online Gaming
+
+```
+Unit (65%):        Game rules, scoring logic, matchmaking algorithm, rank calculation
+Integration (30%): WebSocket lobby, purchase API, leaderboard write pipeline, anti-cheat hooks
+E2E (5%):          Purchase flow (real currency), profile update, lobby join → match start
+```
+
+**Critical E2E tests (must pass before every deploy):**
+1. Player purchases virtual currency pack and sees balance updated
+2. Player joins lobby, lobby fills, match starts within timeout
+3. Match score submitted, leaderboard rank updates within SLA
+4. Time-gated live event inaccessible before and after window
+5. Duplicate purchase attempt returns error, balance charged once
+
+## Common Failure Scenarios
+
+```
+1. Leaderboard shows stale score after match end (cache not invalidated)
+   Test: submit score via API, poll leaderboard until updated or timeout, assert rank
+
+2. In-game purchase succeeds (payment confirmed) but item not delivered to inventory
+   Test: complete purchase flow, call inventory API, assert item present
+
+3. Live event countdown shows wrong timezone for player's locale
+   Test: override browser timezone with page.emulateMedia / locale, verify countdown matches UTC offset
+
+4. Player can join full lobby via direct URL bypass (client-side gate only)
+   Test: fill lobby to max via API, attempt join via direct URL, assert 403 or redirect
+
+5. Virtual currency deducted twice on rapid double-tap of buy button
+   Test: simulate rapid double-click on purchase button, assert single debit in transaction log
+```
+
+## Playwright Patterns for Online Gaming
+
+```ts
+// Test WebSocket game lobby by mocking ws messages
+test('lobby shows player joined notification', async ({ page }) => {
+  await page.goto('/lobby/room-123');
+
+  // Inject a fake player-joined ws message from the server
+  await page.evaluate(() => {
+    const ws = (window as any).__lobbySocket;
+    ws.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'PLAYER_JOINED', playerId: 'bot-99', name: 'TestBot' })
+    }));
+  });
+
+  await expect(page.getByText('TestBot')).toBeVisible();
+});
+
+// Test purchase idempotency with rapid double-click
+test('double-click buy does not charge twice', async ({ page }) => {
+  let purchaseCount = 0;
+  await page.route('**/api/purchase', route => {
+    purchaseCount++;
+    return route.fulfill({ json: { success: true, newBalance: 900 } });
+  });
+
+  await page.goto('/store');
+  const buyButton = page.getByRole('button', { name: 'Buy Now' });
+  await buyButton.dblclick();
+
+  await page.waitForTimeout(500);
+  expect(purchaseCount).toBe(1);
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-gaming" questions={[
+  { q: "Why does the gaming test pyramid have only 5% E2E tests despite real-money transactions being present?", a: "Game logic (scoring, rank, matchmaking) is deterministic and best tested at unit level. Purchase correctness (item delivery, balance update) is best verified at the API/integration layer where state can be asserted directly. E2E tests for games are expensive due to WebSocket timing — they are reserved for the UI purchase flow and lobby entry where bugs are only visible end-to-end." },
+  { q: "How do you test a time-gated live event in Playwright without waiting for the real event window?", a: "Use page.clock.set() (Playwright's built-in clock API) to mock the system time to a point inside or outside the event window. Then assert that gated content is visible or hidden accordingly. For server-side time gates, intercept the API response with page.route() and return a mocked event schedule." },
+  { q: "What is the correct way to detect a double-charge vulnerability in an in-game purchase flow?", a: "Simulate rapid double-click with Playwright's dblclick() on the buy button, then count outgoing purchase API calls via page.route() and assert exactly one request was made. Additionally call the transaction history API and assert a single debit entry. This catches both frontend debounce failures and missing backend idempotency keys." }
+]} />

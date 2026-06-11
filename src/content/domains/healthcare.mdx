@@ -1,0 +1,96 @@
+---
+title: "Healthcare Portal"
+description: "Test strategies for patient portals, appointment booking, medical records, prescription management, and HIPAA compliance."
+features:
+  - Patient registration & login
+  - Appointment booking
+  - Medical records access
+  - Prescription management
+  - Provider directory
+  - HIPAA compliance controls
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+Healthcare is the most legally sensitive domain — data breaches carry HIPAA fines, and software failures can delay care. Testing must cover data privacy controls, accessibility (patients with disabilities need equal access), and correctness of clinical information display.
+
+**Typical stack:** Epic/Cerner integration via FHIR APIs, React portal, OAuth2/SAML SSO with hospital identity provider, HTTPS everywhere, full audit trail.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Patient auth** | SSO, MFA, session, account linking | PHI exposure |
+| **Appointment booking** | Provider search, slot availability, cancellation | Missed care |
+| **Medical records** | Lab results, imaging, notes access, timeline | Wrong patient data shown |
+| **Prescriptions** | Active meds, refill requests, dosage display | Medication error |
+| **Provider directory** | Search, filters, contact, speciality | Patient can't find care |
+| **Accessibility** | WCAG 2.1 AA, screen reader, keyboard | Legal, equity of access |
+
+## Test Pyramid for Healthcare
+
+```
+Unit (50%):    FHIR data transformation, date/dose formatting, PHI masking logic
+Integration (35%): FHIR API calls, auth flows, audit log writes
+E2E (15%):     Patient login → book appointment, view lab results, request refill
+```
+
+**Extra emphasis on accessibility** — WCAG 2.1 AA is a legal requirement. Add axe-core to every critical page test.
+
+## Common Failure Scenarios
+
+```
+1. Wrong patient data displayed after session context switch
+   Test: two patients, log in as patient A, verify records, log in as B → verify A's data not visible
+
+2. Lab result shows wrong units (mg/dL vs mmol/L based on locale)
+   Test: US locale and EU locale, verify units displayed correctly for same lab value
+
+3. Appointment slot not released after cancellation → slot appears unavailable
+   Test: book slot, cancel, attempt to book same slot → should succeed
+
+4. PHI in URL parameters (not encrypted)
+   Test: intercept navigation URLs, assert no patient IDs, SSNs, or DOBs in query params
+
+5. Accessibility: lab results table not readable by screen reader
+   Test: axe-core on lab results page, assert no violations; check table has proper <th> headers
+```
+
+## HIPAA-Relevant Test Patterns
+
+```ts
+// No PHI in URLs
+test('patient ID not exposed in URL', async ({ page }) => {
+  await page.goto('/records');
+  const url = page.url();
+
+  // SSN pattern
+  expect(url).not.toMatch(/\d{3}-\d{2}-\d{4}/);
+  // DOB pattern
+  expect(url).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+  // Long numeric IDs that could be patient IDs — warn if present
+  expect(url).not.toMatch(/patient[_-]?id=\d+/i);
+});
+
+// Audit log written on PHI access
+test('lab result access creates audit log entry', async ({ page, request }) => {
+  await page.goto('/records/labs');
+  await expect(page.getByRole('table', { name: /lab results/i })).toBeVisible();
+
+  // Verify audit trail via API (if accessible in test environment)
+  const auditRes = await request.get('/api/audit/recent', {
+    headers: { Authorization: `Bearer ${process.env.AUDIT_TOKEN}` },
+  });
+  const audit = await auditRes.json();
+  expect(audit.events.some((e: any) => e.action === 'PHI_ACCESS' && e.resource === 'labs')).toBe(true);
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-healthcare" questions={[
+  { q: "What is PHI and why does its handling require special test considerations?", a: "PHI (Protected Health Information) is any health data linked to an identifiable individual — diagnoses, lab results, medications, appointment records. HIPAA requires access controls, audit logs, and encryption. Tests must verify PHI is not exposed in URLs, logs, or error messages, and that session isolation prevents cross-patient data leakage." },
+  { q: "Why is accessibility testing particularly important in healthcare portals?", a: "Patients with disabilities (visual impairment, motor disabilities) need equal access to their own health information — it's both a legal requirement (WCAG 2.1 AA, ADA/EAA) and an equity issue. Poor accessibility can prevent a patient from viewing lab results, booking a follow-up, or managing medications. Axe-core should run on every critical page." },
+  { q: "How do you test that a patient can only see their own records and not another patient's?", a: "Create two test patient accounts (A and B). Log in as A, verify records are A's (by patient ID or name). Log out, log in as B. Verify: B's records are B's, A's records are not accessible even by direct URL manipulation (e.g., /records?patientId=A should return 403, not A's data)." }
+]} />

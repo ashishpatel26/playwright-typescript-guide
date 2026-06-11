@@ -1,0 +1,66 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import type { MarkdownHeading } from 'astro';
+
+export async function getStaticPaths() {
+  const capstones = await getCollection('capstones', c => c.data.status === 'complete');
+  return capstones.map(c => ({
+    params: { slug: c.id.replace(/\.mdx$/, '').split('/').pop()! },
+    props: { entry: c },
+  }));
+}
+
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : import.meta.env.BASE_URL + '/';
+const { entry } = Astro.props;
+const { Content, headings } = await render(entry);
+const h2s = (headings as MarkdownHeading[]).filter(h => h.depth === 2);
+---
+<Base title={`${entry.data.title} — Capstone`} description={entry.data.description}>
+  <div class="wrap docs">
+    <aside class="toc-left">
+      <a class="back" href={`${base}capstones/`}>← All Capstones</a>
+      {h2s.length > 0 && (
+        <>
+          <div class="toc-title">On this page</div>
+          {h2s.map(h => <a class="toc-link" href={`#${h.slug}`}>{h.text}</a>)}
+        </>
+      )}
+    </aside>
+
+    <article data-pagefind-body>
+      <div class="eyebrow">capstone project <span>/ {entry.id.replace(/\.mdx$/, '').split('/').pop()}</span></div>
+      <h1>{entry.data.title}</h1>
+      <p class="lede">{entry.data.description}</p>
+      <div class="stack">
+        {entry.data.stack.map(s => <span>{s}</span>)}
+      </div>
+      <Content />
+      <nav class="pn">
+        <a class="pn-link" href={`${base}capstones/`}>← Back to capstones</a>
+      </nav>
+    </article>
+  </div>
+</Base>
+
+<style>
+.docs { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 48px; padding-top: 48px; }
+.toc-left { position: sticky; top: 80px; align-self: start; }
+.back { display: block; font-family: var(--mono); font-size: 12px; color: var(--ember); text-decoration: none; margin-bottom: 20px; }
+.toc-title { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--faint); margin-bottom: 8px; }
+.toc-link { display: block; font-size: 12.5px; color: var(--muted); text-decoration: none; padding: 3px 0; }
+.toc-link:hover { color: var(--ink); }
+article h1 { font-size: clamp(28px, 4vw, 44px); font-weight: 800; margin-bottom: 12px; }
+article :global(h2) { font-size: 24px; margin: 40px 0 12px; }
+article :global(p) { max-width: 720px; margin-bottom: 12px; }
+article :global(pre) { margin: 16px 0; }
+article :global(ol), article :global(ul) { padding-left: 24px; margin-bottom: 12px; }
+article :global(table) { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+article :global(th), article :global(td) { padding: 8px 12px; border: 1px solid var(--line); text-align: left; }
+article :global(th) { background: var(--panel); font-weight: 600; }
+.stack { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 32px; }
+.stack span { font-family: var(--mono); font-size: 11.5px; color: var(--faint); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; }
+.pn { margin-top: 56px; border-top: 1px solid var(--line); padding-top: 20px; }
+.pn-link { font-family: var(--mono); font-size: 13px; color: var(--c-blue); text-decoration: none; }
+@media (max-width: 1020px) { .docs { grid-template-columns: 1fr; } .toc-left { position: static; } }
+</style>

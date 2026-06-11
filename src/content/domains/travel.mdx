@@ -1,0 +1,106 @@
+---
+title: "Travel & Booking"
+description: "Test strategies for flight/hotel search, availability engines, booking flows, pricing engines, and loyalty programmes."
+features:
+  - Flight & hotel search
+  - Real-time availability
+  - Booking & payment
+  - Itinerary management
+  - Dynamic pricing
+  - Loyalty & rewards
+demoSite:
+  name: "OpenFlights Demo"
+  url: "https://openflights.org"
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+Travel & booking platforms are time-sensitive and price-volatile — availability and pricing can change between search and payment. Testing must cover real-time inventory, complex multi-leg itineraries, third-party GDS integrations, and regulated passenger data handling.
+
+**Typical stack:** React / Angular frontend, fare aggregator APIs (Amadeus, Sabre), payment gateway, PNR record system, email/SMS notification service.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Search** | Origin/destination combos, date ranges, no-results state, invalid airport codes | Zero results or wrong results shown |
+| **Availability** | Seats/rooms in real time, seat-map rendering, sold-out handling | Oversell, customer frustration |
+| **Pricing** | Base fare + taxes + fees = total displayed, currency formatting | Price mismatch, regulatory breach |
+| **Booking** | Passenger details form, seat selection, ancillary add-ons, payment | Booking failure, wrong seat assigned |
+| **Itinerary** | View, modify dates, cancel, refund calculation | Customer stranded, wrong refund |
+| **Loyalty** | Points earn on booking, redemption at checkout, balance display | Points lost, programme distrust |
+
+## Test Pyramid for Travel & Booking
+
+```
+Unit (60%):   Fare calculation, tax rules, points earn formula, date validation
+Integration (30%): Search API, availability feed, GDS booking call, loyalty ledger
+E2E (10%):    Search → select → passenger details → seat → payment → confirmation
+```
+
+**Critical E2E tests (must pass before every deploy):**
+1. Round-trip flight search returns results and shows correct total price
+2. Complete booking flow with passenger details and card payment
+3. Cancel booking, verify refund amount matches policy
+4. Loyalty points credited after booking completion
+5. Date picker rejects past departure dates
+
+## Common Failure Scenarios
+
+```
+1. Price changes between search and checkout → customer sees different total
+   Test: mock search API, then change mock price before checkout, assert price-lock warning shown
+
+2. Seat availability race condition → two users select same seat
+   Test: concurrent seat selection API calls, assert only one succeeds
+
+3. Baggage fee not included in total shown → customer surprise at checkout
+   Test: add checked bag, verify total = base + taxes + baggage fee
+
+4. Date picker allows past dates → booking fails server-side
+   Test: keyboard-navigate calendar to yesterday, assert date is disabled or error shown
+
+5. Multi-city booking drops third leg → incomplete itinerary confirmed
+   Test: add three legs, submit, verify confirmation email lists all three segments
+```
+
+## Playwright Patterns for Travel & Booking
+
+```ts
+// Mock flight search API and verify price display
+test('search results display correct price from API', async ({ page }) => {
+  await page.route('**/api/flights/search', route => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        results: [{ id: 'FL123', total: 284.50, currency: 'USD', breakdown: { base: 240, taxes: 44.50 } }]
+      })
+    });
+  });
+  await page.goto('/flights');
+  await page.getByLabel('From').fill('LHR');
+  await page.getByLabel('To').fill('JFK');
+  await page.getByRole('button', { name: 'Search' }).click();
+  await expect(page.getByTestId('flight-total')).toHaveText('$284.50');
+});
+
+// Calendar date picker keyboard navigation
+test('date picker supports keyboard navigation', async ({ page }) => {
+  await page.goto('/flights');
+  await page.getByLabel('Departure date').click();
+  // Navigate forward one month with ArrowRight, select with Enter
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Enter');
+  await expect(page.getByLabel('Departure date')).not.toHaveValue('');
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-travel" questions={[
+  { q: "Why must you mock the flight search API in E2E tests rather than hitting the real GDS?", a: "Real GDS APIs are rate-limited, paid per call, and return non-deterministic live data — prices and availability change between test runs causing flakiness. Mocking with page.route() gives deterministic price and availability data, makes tests fast, and avoids per-call charges. Reserve real API calls for dedicated contract/integration tests." },
+  { q: "How do you test a seat availability race condition in Playwright?", a: "Use two APIRequestContext instances (or two browser contexts) to send concurrent POST requests to the seat reservation endpoint for the same seat ID. Use Promise.all() to fire them simultaneously, then assert exactly one receives HTTP 200 and the other receives 409 Conflict or equivalent. Verify the seat map shows the seat as taken." },
+  { q: "What is the correct way to verify that baggage fees are included in the displayed total?", a: "Intercept the pricing API with page.route() to return a known breakdown (base + taxes + baggage). Add a checked bag in the UI, then assert the displayed total equals the sum of all three components. Also check the itemised breakdown section shows each line item separately — this catches the UI suppressing fee disclosure." }
+]} />

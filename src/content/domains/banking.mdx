@@ -1,0 +1,95 @@
+---
+title: "Online Banking"
+description: "Test strategies for account management, transfers, transaction history, security controls, and regulatory compliance in banking portals."
+features:
+  - Account dashboard
+  - Fund transfers
+  - Transaction history
+  - Multi-factor authentication
+  - Security & fraud controls
+  - Regulatory compliance
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+Banking is the highest-compliance domain. Every test must account for security controls, session management, and regulatory requirements (PSD2, PCI-DSS, GDPR). Functional correctness and security correctness are equally important.
+
+**Typical stack:** Core banking system (Temenos, Finacle), REST API layer, React SPA, HSM for cryptography, OTP/biometric MFA, full audit logging.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Authentication** | Login, MFA, session timeout, lockout | Unauthorised access |
+| **Account dashboard** | Balance accuracy, account list, real-time updates | Wrong balance displayed |
+| **Transfers** | Internal, external (IBAN/SWIFT), beneficiary management | Wrong amount, wrong account |
+| **Transaction history** | Pagination, filtering, date range, export | Incomplete records |
+| **Security controls** | Rate limiting, account lockout, CSRF, XSS | Fraud, data breach |
+| **Accessibility** | Screen reader, keyboard nav, high contrast | Regulatory (EAA/ADA) |
+
+## Test Pyramid for Banking
+
+```
+Unit (50%):    Business rules (transfer limits, fee calculation, IBAN validation)
+Integration (40%): API security (auth, rate limits), core banking API contracts
+E2E (10%):     Critical journeys only — login + MFA, initiate transfer, view history
+```
+
+**Banking E2E tests are intentionally minimal** — the security and compliance layer is best tested at integration level (real API calls with auth headers, rate limit tests, MFA flow mocks).
+
+## Common Failure Scenarios
+
+```
+1. Session not invalidated after logout → session hijacking risk
+   Test: logout, save session cookie, attempt authenticated request → 401
+
+2. Transfer with amount at boundary (e.g., daily limit) succeeds when it should fail
+   Test: transfer exactly at limit (success), at limit+1 (should reject)
+
+3. OTP expiry: user takes >5min → OTP still accepted
+   Test: mock clock, advance time past OTP TTL, attempt verification
+
+4. Concurrent transfer requests: double payment
+   Test: two simultaneous transfer API calls, same idempotency key
+
+5. Transaction not showing in history until page refresh
+   Test: initiate transfer, immediately check history (no refresh) → should appear
+```
+
+## Security-Specific Tests
+
+```ts
+// Session timeout
+test('session expires after inactivity', async ({ page }) => {
+  await page.goto('/dashboard');
+
+  // Advance time without activity (mock clock or wait if short timeout in test env)
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'lastActivity',
+      { value: Date.now() - 1000 * 60 * 16, writable: true }); // 16 min ago
+  });
+
+  await page.goto('/accounts');  // trigger session check
+  await expect(page).toHaveURL(/\/login/);
+  await expect(page.getByText('Your session has expired')).toBeVisible();
+});
+
+// MFA required for high-value transfer
+test('transfer above threshold requires MFA confirmation', async ({ page }) => {
+  await page.goto('/transfer');
+  await page.getByLabel('Amount').fill('10000');  // above MFA threshold
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  await expect(page.getByRole('dialog', { name: /verification/i })).toBeVisible();
+  await expect(page.getByLabel('One-time password')).toBeVisible();
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-banking" questions={[
+  { q: "Why do banking E2E tests cover less of the test pyramid than e-commerce tests?", a: "Security and compliance logic (rate limits, session management, MFA, transfer limits) is best tested at the API integration level with real HTTP calls including auth headers, not through UI automation. UI E2E tests are slow, brittle for security flows (OTP dialogs, bank redirects), and can't test all failure modes. The API layer gives faster, more reliable coverage of critical security rules." },
+  { q: "What is an idempotency key and why is it important in banking transfer tests?", a: "An idempotency key is a unique identifier sent with a request to ensure it's only processed once even if retried. Test: send two transfer requests with the same idempotency key simultaneously — only one transfer should execute. Without this, network retries could cause duplicate payments." },
+  { q: "How do you test that a banking session is properly invalidated after logout?", a: "1) Log in and capture the session cookie/token. 2) Perform logout. 3) Manually attach the captured cookie to a new request to an authenticated endpoint. 4) Assert 401 Unauthorized. This proves the server-side session was invalidated, not just that the client deleted the cookie." }
+]} />

@@ -1,0 +1,111 @@
+---
+title: "C2C Marketplace"
+description: "Test strategies for peer-to-peer selling, listing creation, buyer/seller flows, dispute resolution, and escrow payments."
+features:
+  - Listing creation
+  - Search & discovery
+  - Buyer & seller flows
+  - Escrow & payments
+  - Reviews & ratings
+  - Dispute resolution
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+C2C marketplaces connect buyers and sellers in real time, requiring dual-persona test flows, financial escrow integrity, and trust mechanisms like reviews and dispute resolution. Testing must cover concurrent bidding/buying races, search index consistency, and payout correctness.
+
+**Typical stack:** React frontend, Elasticsearch search index, Stripe Connect escrow, S3 photo storage, background job for index sync, email/push notifications.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Listing** | Create, edit, photo upload, pricing, category selection, publish/unpublish | Listing invisible, wrong category |
+| **Search** | Keyword, location radius, price range, saved searches, sort order | Items not found, stale results |
+| **Purchase flow** | Make offer, buy-now, checkout, escrow hold, release on receipt | Double-charge, premature payout |
+| **Seller tools** | Dashboard metrics, payout schedule, inventory status | Wrong payout, confused seller |
+| **Reviews** | Post-transaction review, seller reply, flag as abusive | Fake reviews, review bombing |
+| **Disputes** | Open dispute, upload evidence, escalate to support, resolve | Funds held indefinitely, no recourse |
+
+## Test Pyramid for C2C Marketplace
+
+```
+Unit (60%):   Offer validation, escrow state machine, payout fee calculation, search query builder
+Integration (30%): Search index sync, Stripe Connect payout API, photo upload pipeline
+E2E (10%):    Seller lists item → buyer purchases → escrow holds → receipt confirmed → payout released
+```
+
+**Critical E2E tests (must pass before every deploy):**
+1. Seller creates listing and it appears in search results
+2. Buyer completes purchase and funds go into escrow
+3. Buyer confirms receipt and escrow releases to seller
+4. Dispute blocks escrow release until resolved
+5. Review only available after confirmed transaction
+
+## Common Failure Scenarios
+
+```
+1. Listing price update doesn't propagate to search index
+   Test: update price via seller dashboard, re-search, assert new price shown (allow up to 2s for index sync)
+
+2. Buyer and seller both believe they've won a race condition bid
+   Test: fire two concurrent buy-now requests for same single-quantity listing, assert only one HTTP 200
+
+3. Escrow release triggered before item marked received
+   Test: complete purchase, do NOT confirm receipt, assert payout API not called after 24h window mock
+
+4. Review left by non-buyer (no purchase verification)
+   Test: attempt to POST review as a user with no completed transaction for that listing, assert 403
+
+5. Photo upload succeeds but image not visible in listing
+   Test: upload photo, publish listing, load listing page as anonymous user, assert img element loads (no 404)
+```
+
+## Playwright Patterns for C2C Marketplace
+
+```ts
+// Test search debounce — type quickly, verify only one API call
+test('search debounce fires single API call on rapid typing', async ({ page }) => {
+  let searchCallCount = 0;
+  await page.route('**/api/search*', route => {
+    searchCallCount++;
+    route.continue();
+  });
+  await page.goto('/marketplace');
+  const searchInput = page.getByRole('searchbox', { name: 'Search listings' });
+  // Type quickly without pausing
+  await searchInput.pressSequentially('vintage lamp', { delay: 30 });
+  // Wait for debounce window to settle (typically 300ms)
+  await page.waitForTimeout(500);
+  expect(searchCallCount).toBe(1);
+});
+
+// Dual-persona flow — buyer and seller simultaneously
+test('seller sees listing purchased by buyer in real time', async ({ browser }) => {
+  const sellerContext = await browser.newContext({ storageState: 'seller.json' });
+  const buyerContext  = await browser.newContext({ storageState: 'buyer.json' });
+  const sellerPage   = await sellerContext.newPage();
+  const buyerPage    = await buyerContext.newPage();
+
+  await sellerPage.goto('/seller/listings/99');
+  await buyerPage.goto('/listing/99');
+  await buyerPage.getByRole('button', { name: 'Buy now' }).click();
+  await buyerPage.getByRole('button', { name: 'Confirm purchase' }).click();
+
+  // Seller dashboard should reflect sale
+  await sellerPage.reload();
+  await expect(sellerPage.getByTestId('listing-status')).toHaveText('Sold');
+
+  await sellerContext.close();
+  await buyerContext.close();
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-marketplace" questions={[
+  { q: "How do you test search debounce correctly in Playwright without relying on arbitrary timeouts?", a: "Intercept the search API with page.route() and increment a counter for each request. Type the full query with pressSequentially() using a low delay to simulate fast typing, then wait for the debounce window duration with page.waitForTimeout(debounceMs + buffer). Assert the counter equals 1. This verifies the debounce implementation without coupling to internal timers — if the debounce is removed or broken, the counter will exceed 1 and the assertion fails." },
+  { q: "Why does the dual-persona C2C test use two browser contexts rather than two pages in the same context?", a: "Authentication in web apps is stored per browser context (cookies, localStorage, sessionStorage). Two pages in the same context share the same identity. Two separate browser contexts each load independent storage state, so one can be authenticated as the buyer and the other as the seller simultaneously — exactly mirroring a real two-user interaction. This also isolates network state and avoids cross-page cookie bleed." },
+  { q: "What is the correct test strategy for verifying escrow is NOT released prematurely?", a: "Mock the passage of time by intercepting the timer/job trigger rather than waiting real time. After a purchase, stub the backend receipt-confirmation endpoint to return 'not confirmed'. Then trigger the escrow evaluation job (via a test API endpoint or direct API call) and assert the payout API was never called — use page.waitForRequest with a fail-on-match pattern or count route intercept calls to the payout endpoint and assert 0." }
+]} />

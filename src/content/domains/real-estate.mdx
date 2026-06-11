@@ -1,0 +1,104 @@
+---
+title: "Real Estate"
+description: "Test strategies for property search, virtual tours, mortgage calculators, listing management, and agent/buyer portals."
+features:
+  - Property search & filters
+  - Virtual tours & media
+  - Mortgage calculator
+  - Listing management
+  - Agent & buyer portals
+  - Lead management
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+Real estate portals handle high-value decisions with complex search (geo, price, bedrooms, amenities), media-heavy listings (photos, floor plans, virtual tours), and lead capture. Mortgage calculators have complex financial logic. Agent and buyer have different permissions and views of the same listing.
+
+**Typical stack:** React / Next.js frontend, mapping via Mapbox or Google Maps, property data APIs, CRM for lead routing, third-party virtual tour embeds (Matterport).
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Search** | Geo radius, price range, property type, multi-filter, map view, save search | Wrong results, lost leads |
+| **Listing detail** | Photos gallery, floor plan, virtual tour embed, agent contact, save/favourite | Broken media, missed contact |
+| **Mortgage calculator** | Principal, rate, term, monthly payment, amortisation | Wrong financial advice |
+| **Agent portal** | Create/edit listing, lead inbox, analytics | Listing errors, missed leads |
+| **Buyer portal** | Saved searches, favourites, viewing requests | Lost user engagement |
+| **Lead management** | Capture, routing, follow-up status | Revenue loss |
+
+## Test Pyramid for Real Estate
+
+```
+Unit (60%):        Mortgage calculation, geo distance, search scoring
+Integration (30%): Listing API, geo search, lead routing
+E2E (10%):         Search → listing detail → contact agent, mortgage calc output
+```
+
+## Common Failure Scenarios
+
+```
+1. Map search returns properties outside drawn boundary
+   Test: draw boundary polygon, assert all returned properties have coords within polygon
+
+2. Mortgage calc shows monthly payment without including PMI (below 20% down)
+   Test: enter < 20% down payment, assert PMI line item present and total reflects it
+
+3. Virtual tour iframe blocked by CSP header
+   Test: navigate to listing, check for CSP errors in page.on('console'), assert iframe loads
+
+4. Listing marked sold still appears in search results (cache)
+   Test: mark listing sold via API, trigger search, assert listing absent (retry with cache TTL wait)
+
+5. Agent receives lead but buyer email not confirmed (unverified contact)
+   Test: submit contact form with unverified email, assert agent lead inbox shows unverified flag
+```
+
+## Playwright Patterns for Real Estate
+
+```ts
+// Mortgage calculator with known inputs/outputs
+test('mortgage calculator produces correct monthly payment', async ({ page }) => {
+  await page.goto('/mortgage-calculator');
+  await page.getByLabel('Home price').fill('400000');
+  await page.getByLabel('Down payment').fill('80000');
+  await page.getByLabel('Interest rate').fill('6.5');
+  await page.getByLabel('Loan term (years)').selectOption('30');
+  await page.getByRole('button', { name: 'Calculate' }).click();
+  // 320000 at 6.5% over 30 years = ~$2,023/month
+  await expect(page.getByTestId('monthly-payment')).toHaveText(/\$2,02[0-9]/);
+});
+
+// Map boundary drawing with page.mouse
+test('map search respects drawn boundary', async ({ page }) => {
+  await page.goto('/search?view=map');
+  await page.getByRole('button', { name: 'Draw area' }).click();
+  const mapCanvas = page.locator('#map-canvas');
+  const box = await mapCanvas.boundingBox();
+  // Draw a small rectangle in the centre of the map
+  await page.mouse.move(box.x + 100, box.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 300, box.y + 300);
+  await page.mouse.up();
+  await expect(page.locator('.property-card')).toHaveCount(await page.locator('.property-card').count());
+});
+
+// Saved search notification trigger
+test('saved search triggers notification on new listing', async ({ page }) => {
+  await page.goto('/search?city=London&minPrice=200000&maxPrice=400000');
+  await page.getByRole('button', { name: 'Save search' }).click();
+  await expect(page.getByText('Search saved')).toBeVisible();
+  // Verify saved search appears in buyer portal
+  await page.goto('/portal/saved-searches');
+  await expect(page.locator('.saved-search-card')).toHaveCount(1);
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-realestate" questions={[
+  { q: "Why is testing the mortgage calculator with exact known inputs critical and what failure mode must you cover below 20% down payment?", a: "Mortgage calculators are financial advice tools — a calculation error misleads buyers on affordability. The critical failure below 20% down is omitting PMI (Private Mortgage Insurance): the monthly payment shown is lower than reality. Test with a known principal, rate, and term, assert the exact monthly payment, and for < 20% down assert the PMI line item is present and included in the total." },
+  { q: "How do you test that a geo-boundary map search does not return properties outside the drawn area?", a: "Use page.mouse to draw a boundary polygon on the map canvas, then intercept the search API response (page.route or page.waitForResponse) and parse the returned listing coordinates. Assert every lat/lng pair falls within the drawn bounding box. Also test the UI card count matches the API count — a mismatch exposes a frontend rendering filter that shouldn't exist." },
+  { q: "What cache-related failure is common in real estate listing status and how do you write a reliable test for it?", a: "A listing marked as sold via the backend can persist in search results because the search index or CDN edge cache hasn't expired. Test by marking the listing sold via API, then polling the search endpoint (with a retry loop up to the known cache TTL) and asserting the listing is absent. Also assert the listing detail page shows 'Sold' status so you can distinguish a search-index cache bug from a detail-page bug." }
+]} />

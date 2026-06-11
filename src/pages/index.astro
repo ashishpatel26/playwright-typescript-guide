@@ -3,6 +3,13 @@ import Base from '../layouts/Base.astro';
 import { levels } from '../data/levels';
 import { getCollection } from 'astro:content';
 
+const domains = (await getCollection('domains', d => d.data.status === 'complete'))
+  .sort((a, b) => a.data.title.localeCompare(b.data.title));
+const capstones = (await getCollection('capstones', c => c.data.status === 'complete'))
+  .sort((a, b) => a.data.order - b.data.order);
+const domainSlug = (id: string) => id.replace(/\.mdx$/, '').split('/').pop()!;
+const capstoneSlug = (id: string) => id.replace(/\.mdx$/, '').split('/').pop()!;
+
 const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : import.meta.env.BASE_URL + '/';
 const allTopics = await getCollection('topics', t => t.data.status === 'complete');
 const topicCount = (n: number) => allTopics.filter(t => t.data.level === n).length;
@@ -11,7 +18,7 @@ const totalHours = levels.reduce((s, l) => s + l.hours, 0);
 <Base title="Learn production-grade Playwright">
   <header class="hero">
     <div class="wrap">
-      <span class="hero-pill"><i></i>15 levels · {totalHours}+ hours · real demo apps</span>
+      <span class="hero-pill"><i></i>{levels.length} levels · {totalHours}+ hours · real demo apps</span>
       <h1>Playwright engineering, <em>the production way.</em></h1>
       <p class="lede">
         Not another tutorial. A complete roadmap from testing fundamentals to Staff-QE-level
@@ -25,7 +32,7 @@ const totalHours = levels.reduce((s, l) => s + l.hours, 0);
 
   <section id="levels">
     <div class="wrap">
-      <div class="eyebrow">the roadmap <span>/ 15 levels</span></div>
+      <div class="eyebrow">the roadmap <span>/ {levels.length} levels</span></div>
       <h2>From fundamentals to leadership</h2>
       <div class="level-grid">
         {levels.map(l => (
@@ -42,19 +49,49 @@ const totalHours = levels.reduce((s, l) => s + l.hours, 0);
 
   <section id="domains">
     <div class="wrap">
-      <div class="eyebrow">apply it <span>/ 16 domain projects</span></div>
+      <div class="eyebrow">apply it <span>/ {domains.length} domain projects</span></div>
       <h2>Real domains, real test strategies</h2>
-      <p class="lede">E-commerce, banking, healthcare, fintech and 12 more — each with feature
-      test matrices and production failure scenarios. Coming as content waves land.</p>
+      <p class="lede">E-commerce, banking, healthcare, fintech and more — each with feature test matrices and production failure scenarios.</p>
+      {domains.length > 0 ? (
+        <div class="level-grid" style="margin-top:28px">
+          {domains.slice(0, 6).map(d => (
+            <a class="level-card" href={`${base}domains/${domainSlug(d.id)}/`}>
+              <h3>{d.data.title}</h3>
+              <p>{d.data.description}</p>
+            </a>
+          ))}
+        </div>
+      ) : null}
+      {domains.length > 6 && (
+        <p style="margin-top:16px;font-family:var(--mono);font-size:13px">
+          <a href={`${base}domains/`} style="color:var(--ember)">View all {domains.length} domains →</a>
+        </p>
+      )}
+      {domains.length === 0 && (
+        <p class="lede" style="margin-top:12px;opacity:.5">Coming as content waves land.</p>
+      )}
     </div>
   </section>
 
   <section id="capstones">
     <div class="wrap">
-      <div class="eyebrow">prove it <span>/ 5 capstones</span></div>
+      <div class="eyebrow">prove it <span>/ {capstones.length} capstones</span></div>
       <h2>Portfolio-grade capstone frameworks</h2>
-      <p class="lede">Five end-to-end frameworks — from a Magento e-commerce suite to an
-      AI-powered QE platform. Coming as content waves land.</p>
+      <p class="lede">End-to-end frameworks — from a Magento e-commerce suite to an AI-powered QE platform.</p>
+      {capstones.length > 0 ? (
+        <div class="level-grid" style="margin-top:28px">
+          {capstones.map(c => (
+            <a class="level-card" href={`${base}capstones/${capstoneSlug(c.id)}/`}>
+              <h3>{c.data.title}</h3>
+              <p>{c.data.description}</p>
+              <span class="lmeta">{c.data.stack.slice(0, 3).join(' · ')}</span>
+            </a>
+          ))}
+        </div>
+      ) : null}
+      {capstones.length === 0 && (
+        <p class="lede" style="margin-top:12px;opacity:.5">Coming as content waves land.</p>
+      )}
     </div>
   </section>
 </Base>

@@ -1,0 +1,52 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : import.meta.env.BASE_URL + '/';
+const capstones = (await getCollection('capstones', c => c.data.status === 'complete'))
+  .sort((a, b) => a.data.order - b.data.order);
+const slugOf = (id: string) => id.replace(/\.mdx$/, '').split('/').pop()!;
+---
+<Base title="Capstone Projects — pw·handbook" description="Five portfolio-grade Playwright test frameworks — from an e-commerce suite to an AI-powered QE platform.">
+  <section class="hero-sub">
+    <div class="wrap">
+      <div class="eyebrow">prove it <span>/ {capstones.length} capstones</span></div>
+      <h1>Portfolio-grade capstone frameworks</h1>
+      <p class="lede">Each capstone is a complete, production-grade test framework with architecture decisions, CI/CD integration, and patterns you can adapt for your own projects.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="capstone-list">
+        {capstones.map((c, i) => (
+          <a class="capstone-card" href={`${base}capstones/${slugOf(c.id)}/`}>
+            <span class="cnum">{String(i + 1).padStart(2, '0')}</span>
+            <div class="cinfo">
+              <h3>{c.data.title}</h3>
+              <p>{c.data.description}</p>
+              <div class="stack">
+                {c.data.stack.map(s => <span>{s}</span>)}
+              </div>
+            </div>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+.hero-sub { padding: 56px 0 40px; border-bottom: 1px solid var(--line); }
+.hero-sub h1 { font-size: clamp(28px, 4vw, 44px); font-weight: 800; margin: 12px 0; }
+section { padding: 56px 0; }
+.capstone-list { display: flex; flex-direction: column; gap: 16px; }
+.capstone-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 24px 28px; text-decoration: none; color: var(--ink); display: flex; gap: 28px; align-items: flex-start; transition: border-color .15s; }
+.capstone-card:hover { border-color: var(--ember); }
+.cnum { font-family: var(--mono); font-size: 28px; font-weight: 800; color: var(--ember); opacity: .4; line-height: 1; flex-shrink: 0; width: 40px; }
+.cinfo { flex: 1; }
+.cinfo h3 { margin: 0 0 8px; font-size: 20px; }
+.cinfo p { font-size: 14px; color: var(--muted); margin-bottom: 12px; }
+.stack { display: flex; flex-wrap: wrap; gap: 6px; }
+.stack span { font-family: var(--mono); font-size: 11px; color: var(--faint); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+</style>

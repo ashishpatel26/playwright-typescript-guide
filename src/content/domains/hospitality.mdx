@@ -1,0 +1,108 @@
+---
+title: "Hotel & Hospitality"
+description: "Test strategies for room search, rate management, booking flows, loyalty programmes, check-in/check-out, and property management systems."
+features:
+  - Room search & availability
+  - Rate & pricing engine
+  - Booking & payment
+  - Loyalty programme
+  - Online check-in
+  - Property management
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+Hospitality booking combines real-time availability, complex rate rules (BAR, member rates, package rates), and PMS integration. Loyalty points add a currency layer. Online check-in has legal requirements (ID verification). GDS (Global Distribution System) integration means availability can change in seconds.
+
+**Typical stack:** React / Angular frontend, Opera or Mews PMS, Amadeus / Sabre GDS, Stripe or Adyen payments, loyalty managed in-house or via Comarch.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Search** | Location, dates, guests, room type, filters, map view | Wrong availability, overbooking |
+| **Rates** | Rate calendar, member vs public rate, packages, last-minute | Revenue loss, guest complaint |
+| **Booking** | Room selection, extras, payment, confirmation email | Lost reservation, wrong room |
+| **Loyalty** | Points earn on booking, redemption, tier benefits | Points fraud, guest trust |
+| **Online check-in** | ID upload, arrival time, room preference, digital key | Legal risk, security failure |
+| **PMS integration** | Reservation sync, room assignment, housekeeping status | Operational failure |
+
+## Test Pyramid for Hotel & Hospitality
+
+```
+Unit (50%):        Rate calculation, points earn, availability logic
+Integration (40%): PMS sync, GDS availability, payment gateway
+E2E (10%):         Search → book → confirmation, online check-in flow
+```
+
+## Common Failure Scenarios
+
+```
+1. Rate changes between search and payment (rate not locked)
+   Test: intercept rate API between search and checkout, assert displayed price matches final charge
+
+2. Room shown available but blocked in PMS (sync delay)
+   Test: mock PMS sync delay via page.route, attempt booking, assert conflict error shown
+
+3. Loyalty points deducted on booking but not credited on cancellation
+   Test: book with points, cancel, assert points balance restored to pre-booking value
+
+4. Online check-in available for wrong date (timezone mismatch)
+   Test: book for midnight boundary date, assert check-in window uses property local timezone
+
+5. Package rate doesn't include all advertised inclusions in checkout summary
+   Test: select package, proceed to checkout, assert all inclusions listed match package description
+```
+
+## Playwright Patterns for Hotel & Hospitality
+
+```ts
+// Date picker for check-in/check-out (min 1 night, max 30)
+test('date picker enforces min 1 night and max 30 nights', async ({ page }) => {
+  await page.goto('/search');
+  await page.getByLabel('Check-in').click();
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  await page.getByTestId(`day-${todayStr}`).click();
+  // Same-day checkout should be disabled
+  await expect(page.getByTestId(`day-${todayStr}`)).toHaveAttribute('aria-disabled', 'true');
+  // 31 nights ahead should be disabled
+  const over30 = new Date(today);
+  over30.setDate(over30.getDate() + 31);
+  const over30Str = over30.toISOString().split('T')[0];
+  await expect(page.getByTestId(`day-${over30Str}`)).toHaveAttribute('aria-disabled', 'true');
+});
+
+// Rate lock: simulate price change mid-booking
+test('rate is locked after room selection', async ({ page }) => {
+  await page.goto('/search?location=London&checkin=2026-08-01&checkout=2026-08-03');
+  await page.getByTestId('room-card-0').getByRole('button', { name: 'Select' }).click();
+  // Simulate backend price change before payment step
+  await page.route('**/api/rates/**', route => {
+    route.fulfill({ json: { pricePerNight: 999 } }); // inflated price
+  });
+  await page.goto('/checkout');
+  // The locked rate should still show the original price
+  await expect(page.getByTestId('rate-per-night')).not.toHaveText('£999');
+  await expect(page.getByTestId('rate-locked-badge')).toBeVisible();
+});
+
+// Loyalty point calculation on confirmation page
+test('loyalty points earned shown on confirmation', async ({ page }) => {
+  await page.goto('/booking/confirmation/TEST123');
+  const pointsEarned = page.getByTestId('loyalty-points-earned');
+  await expect(pointsEarned).toBeVisible();
+  // Points should be a positive integer
+  const text = await pointsEarned.textContent();
+  expect(parseInt(text.replace(/\D/g, ''))).toBeGreaterThan(0);
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-hospitality" questions={[
+  { q: "What is rate locking in hospitality booking and how do you test that a displayed rate doesn't change between search and payment?", a: "Rate locking means the price shown at room selection is held through payment, even if the live rate changes. Test by intercepting the rates API (page.route) after room selection and returning a different price, then proceeding to checkout and asserting the displayed total still matches the original locked rate. Also assert a 'rate locked' or 'price guaranteed' badge is present so the user knows the lock is active." },
+  { q: "How do you test loyalty points are correctly reversed on booking cancellation?", a: "Record the points balance before booking via the loyalty API. Book a room using points redemption. Assert the balance decreases by the correct amount. Then cancel the booking and poll the loyalty API until the balance is restored. Assert the final balance equals the pre-booking balance. This catches the common bug where points are debited immediately but the credit on cancellation is asynchronous and sometimes dropped." },
+  { q: "Why is timezone handling critical for online check-in availability and what boundary condition must your test cover?", a: "Online check-in opens a window (typically 24–48 hours before arrival). If the server calculates this in UTC but the property is in a different timezone, check-in can open early or late — or on the wrong calendar date entirely. Test by booking a stay with an arrival time near midnight in the property's local timezone, then assert the check-in window opens and closes using the property's local time, not UTC. Use page.clock to control the browser clock for the boundary moment." }
+]} />

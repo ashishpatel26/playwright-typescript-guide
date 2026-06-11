@@ -1,0 +1,116 @@
+---
+title: "Government & Public Sector"
+description: "Test strategies for citizen portals, permit applications, benefit claims, public information services, and accessibility-first government websites."
+features:
+  - Citizen authentication
+  - Form submission & tracking
+  - Document upload
+  - Benefit & permit applications
+  - WCAG 2.1 AA compliance
+  - Multi-language support
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+Government portals serve all citizens — including those with disabilities, limited digital literacy, and slow connections. WCAG 2.1 AA compliance is legally mandated in most jurisdictions, not optional. Forms are complex: multi-step wizards with conditional fields, document uploads, government ID verification, and processing times measured in days or weeks. A form bug can mean a citizen misses a benefit deadline or permit expiry.
+
+**Typical stack:** Government-approved CMS or bespoke Java/.NET backend, GOV.UK Notify / AWS SES for notifications, S3/Azure Blob for document storage, identity providers (GOV.UK Verify, Login.gov, FranceConnect), strict Content Security Policies.
+
+The high E2E percentage (25%) reflects the complexity of multi-step wizard flows where state management, conditional logic, and session handling all interact — bugs only surface across the full journey.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Authentication** | Government ID / GOV.UK Verify / Login.gov SSO, MFA, session expiry | Unauthorised access, citizen locked out |
+| **Forms** | Multi-step wizard, conditional field logic, save-and-resume, server validation | Lost data, invalid submission accepted |
+| **Document upload** | PDF and image types, file size limits, virus scan, confirmation reference | Missing evidence, failed applications |
+| **Application tracking** | Status updates, reference number display, email/SMS notifications | Citizens unaware of decisions |
+| **Accessibility** | axe-core on every page, keyboard-only navigation, screen reader landmarks | Legal non-compliance, citizen exclusion |
+| **Internationalisation** | Welsh/French/Spanish language switch, translated content completeness, RTL | Citizens cannot complete forms in native language |
+
+## Test Pyramid for Government & Public Sector
+
+```
+Unit (40%):        Form validation rules, conditional field logic, date calculations, eligibility rules
+Integration (35%): SSO flows, document upload API, notification triggers, audit log writes
+E2E (25%):         Full application submission, accessibility checks per wizard step, session timeout handling
+```
+
+**Critical E2E tests (must pass before every deploy):**
+1. Citizen completes full multi-step application form and receives reference number
+2. Keyboard-only user can navigate and submit the form without mouse
+3. axe-core reports zero critical violations on every wizard step
+4. Document upload succeeds and reference appears in application record
+5. Session timeout mid-form prompts save warning, not silent data loss
+
+## Common Failure Scenarios
+
+```
+1. Form loses data on browser back navigation (no history state management)
+   Test: fill step 2, click browser back, click forward, assert step 2 data preserved
+
+2. Conditional field required validation fires even when field is hidden
+   Test: choose option that hides field, submit form, assert no validation error for hidden field
+
+3. Document upload succeeds (200 OK) but reference not saved in application (race condition)
+   Test: intercept upload response, delay DB write via page.route(), complete submission, assert reference in record
+
+4. Session timeout mid-form loses all data (no auto-save implemented)
+   Test: fill form fields, advance step, expire session token via page.evaluate(), attempt continue, assert save prompt shown
+
+5. Language switch mid-form resets form state (router remounts component)
+   Test: fill step 1 in English, switch to Welsh, assert form field values unchanged
+```
+
+## Playwright Patterns for Government Portals
+
+```ts
+// Test form autosave by intercepting the save API
+test('form data is autosaved on step advance', async ({ page }) => {
+  let savedPayload: unknown;
+  await page.route('**/api/application/save', async route => {
+    const body = await route.request().postDataJSON();
+    savedPayload = body;
+    await route.fulfill({ json: { saved: true } });
+  });
+
+  await page.goto('/apply/step-1');
+  await page.getByLabel('Full name').fill('Jane Doe');
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  expect((savedPayload as any)?.fullName).toBe('Jane Doe');
+});
+
+// Run axe-core on every wizard step
+import AxeBuilder from '@axe-core/playwright';
+
+test('wizard step 2 has no critical accessibility violations', async ({ page }) => {
+  await page.goto('/apply/step-2');
+  const results = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa'])
+    .analyze();
+  expect(results.violations).toEqual([]);
+});
+
+// Test keyboard-only form completion
+test('form is completable with keyboard only', async ({ page }) => {
+  await page.goto('/apply/step-1');
+  await page.keyboard.press('Tab'); // focus first field
+  await page.keyboard.type('Jane Doe');
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('01/01/1980');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Enter'); // submit
+  await expect(page).toHaveURL(/step-2/);
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-government" questions={[
+  { q: "Why does the government domain test pyramid allocate 25% to E2E tests — much higher than most domains?", a: "Government forms involve multi-step wizards with conditional logic, session state, document uploads, and SSO flows that only manifest as bugs at the full journey level. A field validation rule may be correct in isolation but interact incorrectly with conditional display logic and save-and-resume state. The high E2E share reflects that the citizen's complete journey is the unit of correctness, not individual components." },
+  { q: "How do you test that a conditional form field does not trigger required validation when it is hidden?", a: "Choose the form option that causes the conditional field to hide (e.g., select 'No' for 'Do you have a passport?'), then submit the form without filling the hidden field. Assert that no validation error appears for that field and that the form advances to the next step. This must be tested for every conditional branch in the form." },
+  { q: "What is the correct tool and approach for WCAG 2.1 AA accessibility testing in Playwright?", a: "Use @axe-core/playwright (AxeBuilder) on every page and every wizard step individually. Run with .withTags(['wcag2a', 'wcag2aa']) and assert results.violations is empty. Supplement with keyboard-only navigation tests (Tab, Enter, arrow keys) and verify focus order and visible focus indicators. Axe catches ~30-40% of WCAG issues automatically — manual keyboard and screen reader testing covers the rest." }
+]} />

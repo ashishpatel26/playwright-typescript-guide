@@ -1,0 +1,190 @@
+---
+title: "Multi-Tenant SaaS Suite"
+description: "A test suite for a multi-tenant SaaS dashboard — RBAC coverage, tenant isolation tests, onboarding flows, and subscription billing validation."
+stack:
+  - Playwright
+  - TypeScript
+  - Stripe Billing
+  - PostgreSQL
+  - GitHub Actions
+order: 3
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Business Context
+
+A SaaS platform hosts hundreds of tenant organisations, each with admin, member, and viewer roles. A security regression — one tenant reading another's data — or an RBAC bypass — a viewer deleting records — would be a critical incident. The billing system uses Stripe Subscriptions with metered usage; plan transitions and trial expirations must also be verified.
+
+Goals:
+- **Tenant data isolation**: cross-tenant API requests must receive `403 Forbidden`
+- **RBAC enforcement**: every action × every role combination asserted
+- **Onboarding flow**: new tenant can sign up, invite members, and publish their first record
+- **Billing transitions**: trial → paid, plan upgrade/downgrade, cancellation
+
+## Architecture Overview
+
+| Layer | Responsibility |
+|---|---|
+| **Multi-user fixture** | Provisions admin + member + viewer for the same tenant per test |
+| **Tenant fixture** | Creates an isolated tenant org via API; deletes it in teardown |
+| **Billing fixture** | Creates a Stripe test clock; advances time to trigger billing events |
+| **RBAC matrix** | Parameterised spec — all actions × all roles; asserts allowed/forbidden |
+| **Isolation suite** | Actor authenticated as Tenant A attempts Tenant B's resource IDs |
+
+## Framework Structure
+
+```
+e2e/
+├── fixtures/
+│   ├── users.fixture.ts
+│   ├── tenant.fixture.ts
+│   └── billing.fixture.ts
+├── tests/
+│   ├── rbac.spec.ts
+│   ├── tenant-isolation.spec.ts
+│   ├── onboarding.spec.ts
+│   └── billing.spec.ts
+├── utils/
+│   ├── rbac-matrix.ts
+│   └── stripe-clock.ts
+└── playwright.config.ts
+```
+
+## Key Implementation Patterns
+
+**Multi-user fixture** — all three roles provisioned for one tenant, available to any test:
+
+```ts
+// fixtures/users.fixture.ts
+type RoleFixtures = {
+  adminPage: Page;
+  memberPage: Page;
+  viewerPage: Page;
+};
+
+export const test = base.extend<RoleFixtures>({
+  adminPage: async ({ browser, tenant }, use) => {
+    const ctx = await browser.newContext({
+      storageState: await loginAs(tenant, 'admin'),
+    });
+    await use(await ctx.newPage());
+    await ctx.close();
+  },
+  memberPage: async ({ browser, tenant }, use) => {
+    const ctx = await browser.newContext({
+      storageState: await loginAs(tenant, 'member'),
+    });
+    await use(await ctx.newPage());
+    await ctx.close();
+  },
+  viewerPage: async ({ browser, tenant }, use) => {
+    const ctx = await browser.newContext({
+      storageState: await loginAs(tenant, 'viewer'),
+    });
+    await use(await ctx.newPage());
+    await ctx.close();
+  },
+});
+```
+
+**RBAC matrix testing** — parameterised over roles × actions:
+
+```ts
+// utils/rbac-matrix.ts
+export const RBAC_MATRIX = [
+  { action: 'create_record', role: 'admin',  allowed: true  },
+  { action: 'create_record', role: 'member', allowed: true  },
+  { action: 'create_record', role: 'viewer', allowed: false },
+  { action: 'delete_record', role: 'admin',  allowed: true  },
+  { action: 'delete_record', role: 'member', allowed: false },
+  { action: 'delete_record', role: 'viewer', allowed: false },
+  { action: 'invite_user',   role: 'admin',  allowed: true  },
+  { action: 'invite_user',   role: 'member', allowed: false },
+  { action: 'invite_user',   role: 'viewer', allowed: false },
+] as const;
+
+// rbac.spec.ts
+for (const { action, role, allowed } of RBAC_MATRIX) {
+  test(`${role} ${allowed ? 'can' : 'cannot'} ${action}`, async ({ request, tokens }) => {
+    const response = await performAction(request, action, tokens[role]);
+    expect(response.status()).toBe(allowed ? 200 : 403);
+  });
+}
+```
+
+**Cross-tenant isolation** — Tenant A's token attempts Tenant B's resource IDs:
+
+```ts
+// tests/tenant-isolation.spec.ts
+test('cannot read another tenant record', async ({ request, tenantA, tenantB }) => {
+  const recordId = await tenantB.createRecord();
+
+  const response = await request.get(`/api/records/${recordId}`, {
+    headers: { Authorization: `Bearer ${tenantA.adminToken}` },
+  });
+
+  expect(response.status()).toBe(403);
+});
+```
+
+**Stripe test clock for billing advancement**:
+
+```ts
+// utils/stripe-clock.ts
+export async function advanceToTrialEnd(clockId: string) {
+  const trialEnd = Math.floor(Date.now() / 1000) + 14 * 86400; // 14 days
+  await stripe.testHelpers.testClocks.advance(clockId, {
+    frozen_time: trialEnd,
+  });
+}
+
+// billing.spec.ts
+test('trial expiry downgrades account', async ({ page, billingFixture }) => {
+  await advanceToTrialEnd(billingFixture.clockId);
+  await page.reload();
+  await expect(page.getByRole('banner')).toContainText('Trial ended');
+});
+```
+
+## CI/CD Integration
+
+```yaml
+# .github/workflows/saas-tests.yml
+jobs:
+  rbac-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npx playwright install --with-deps
+      - run: npx playwright test tests/rbac.spec.ts tests/tenant-isolation.spec.ts
+          --workers=4 --reporter=allure-playwright
+        env:
+          API_URL: ${{ secrets.STAGING_URL }}
+
+  billing-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npx playwright install --with-deps
+      - run: npx playwright test tests/billing.spec.ts
+          --workers=1 --reporter=allure-playwright
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+
+  publish-allure:
+    needs: [rbac-suite, billing-suite]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: simple-elf/allure-report-action@v1
+```
+
+RBAC and isolation specs run with `--workers=4` — they're stateless per tenant fixture. The billing suite runs with `--workers=1` because Stripe test clocks advance global time on the test account and concurrent advancement causes race conditions.
+
+<QuizCard client:only="react" storageKey="cap-saas" questions={[
+  { q: "Why must billing tests run with --workers=1 while RBAC tests can use --workers=4?", a: "Stripe test clocks are account-level objects. If two tests advance the same clock concurrently — or create conflicting clocks — billing events fire in unpredictable order, making assertions non-deterministic. RBAC tests operate on per-tenant fixtures with no shared mutable state, so they're safe to run in parallel." },
+  { q: "What makes the RBAC matrix approach better than writing one test per role per action?", a: "Writing individual tests means 9+ nearly-identical test functions that diverge in maintenance. The matrix defines the truth table once as data, and a loop generates all test cases. Adding a new action requires one new row in the matrix — every role's expectation is automatically covered. It's also self-documenting: the matrix IS the access control specification." },
+  { q: "How does the tenant isolation test guard against horizontal privilege escalation?", a: "Tenant A's admin token is used to request a resource ID that belongs to Tenant B. A correct implementation must scope the database query to the authenticated tenant's org ID — not just check that the resource ID exists. The test asserts HTTP 403, which fails if the backend performs only ID existence checks without tenant ownership verification." }
+]} />

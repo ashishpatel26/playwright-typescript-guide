@@ -1,0 +1,112 @@
+---
+title: "Fintech & Payments"
+description: "Test strategies for payment processors, digital wallets, lending platforms, and open banking integrations."
+features:
+  - Payment processing
+  - Digital wallet
+  - Open banking (PSD2)
+  - KYC & identity verification
+  - Transaction monitoring
+  - Regulatory compliance
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+Fintech applications move money — testing failures can mean financial loss, regulatory sanctions, or fraud. The testing challenge is the dependency on third-party payment rails (Stripe, Adyen, Plaid) and regulatory verification services (KYC/AML providers).
+
+**Typical stack:** Node.js API, React dashboard, Stripe/Adyen/Braintree payment processing, Plaid open banking, Jumio/Onfido KYC, PostgreSQL for ledger.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Payment initiation** | Card, bank transfer, wallet — success and failure paths | Double charge, failed payment |
+| **Wallet operations** | Deposit, withdraw, balance, limits | Wrong balance, blocked withdrawal |
+| **KYC flow** | Document upload, identity check, rejection handling | Compliance violation |
+| **Open banking** | Bank connection, consent flow, account sync | Broken sync, wrong data |
+| **Transaction history** | Amounts, dates, statuses, currency | Incorrect statements |
+| **Limits & controls** | Daily limits, velocity checks, fraud holds | Fraud, regulatory breach |
+
+## Test Pyramid for Fintech
+
+```
+Unit (55%):    Ledger arithmetic, FX conversion, limit rules, KYC state machine
+Integration (35%): Payment API contracts (Stripe/Adyen test mode), webhook handling
+E2E (10%):     Complete payment flow, wallet top-up, KYC submission
+```
+
+**Webhooks are critical** — payment status is often delivered asynchronously. Test webhook handling at the integration level.
+
+## Common Failure Scenarios
+
+```
+1. Webhook received before UI payment confirmation → race condition in status
+   Test: intercept Stripe webhook, delay by 2s, verify UI handles pending state correctly
+
+2. FX conversion rate used for display differs from rate used for charge
+   Test: compare displayed rate in UI against actual charged amount in confirmation
+
+3. KYC re-submission after rejection doesn't reset state → user stuck
+   Test: submit invalid doc, verify rejection, re-submit valid doc → verify success path
+
+4. Duplicate payment on network timeout retry
+   Test: mock 408 response on first attempt, verify retry uses idempotency key, verify single charge
+
+5. Wallet balance shows stale data after concurrent operations
+   Test: two concurrent deposits via API, verify balance = initial + both amounts
+```
+
+## Fintech-Specific Test Patterns
+
+```ts
+// Test Stripe payment with webhooks
+test('payment webhook updates order status', async ({ page, request }) => {
+  // Initiate payment
+  await page.goto('/pay');
+  await page.getByLabel('Amount').fill('50');
+  await page.getByRole('button', { name: 'Pay' }).click();
+
+  // Get payment intent ID from UI
+  const intentId = await page.locator('[data-payment-intent]').getAttribute('data-payment-intent');
+
+  // Simulate Stripe webhook (test environment only)
+  await request.post('/api/webhooks/stripe', {
+    data: {
+      type: 'payment_intent.succeeded',
+      data: { object: { id: intentId, status: 'succeeded', amount: 5000 } },
+    },
+    headers: { 'stripe-signature': process.env.STRIPE_WEBHOOK_SECRET! },
+  });
+
+  // Verify status updated
+  await expect(page.getByRole('status')).toContainText('Payment confirmed');
+});
+
+// Verify idempotency
+test('duplicate payment request with same key charges only once', async ({ request }) => {
+  const idempotencyKey = `test-${Date.now()}`;
+  const headers = { 'Idempotency-Key': idempotencyKey, Authorization: `Bearer ${process.env.TEST_TOKEN}` };
+  const body = { amount: 1000, currency: 'USD', source: 'card_test' };
+
+  const [res1, res2] = await Promise.all([
+    request.post('/api/payments', { data: body, headers }),
+    request.post('/api/payments', { data: body, headers }),
+  ]);
+
+  expect(res1.status()).toBe(200);
+  expect(res2.status()).toBe(200);
+
+  const p1 = await res1.json();
+  const p2 = await res2.json();
+  expect(p1.id).toBe(p2.id);  // same payment ID = idempotent
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-fintech" questions={[
+  { q: "What is an idempotency key and why must fintech payment APIs support it?", a: "A unique key sent with each payment request so that if the request is retried (network timeout, client retry), the server processes it only once. Without idempotency keys, a network retry can charge the customer twice. Test by sending the same request twice concurrently — verify only one charge is created and both responses return the same payment ID." },
+  { q: "Why are webhooks a critical test target in fintech applications?", a: "Payment status is often asynchronous — the payment processor sends a webhook event (payment_intent.succeeded, transfer.failed) that must update the application's internal state. If webhook handling has a bug, payments can get stuck in 'pending', refunds not processed, or fraud holds not lifted. Test by simulating webhook events and verifying state transitions." },
+  { q: "What is the key difference between testing a fintech UI and testing a banking portal UI?", a: "Fintech tends to be consumer-facing with rapid iteration and third-party API dependencies (Stripe, Plaid, Jumio). Banking portals connect to regulated core banking systems with strict session management and compliance requirements. Fintech testing emphasises payment flow variation and third-party integration mocks; banking emphasises security controls and audit trails." }
+]} />

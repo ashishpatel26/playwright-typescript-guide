@@ -1,0 +1,96 @@
+---
+title: "Video Streaming"
+description: "Test strategies for content catalogues, video playback, DRM, subscription management, and adaptive bitrate streaming."
+features:
+  - Content catalogue & search
+  - Video playback
+  - Subscription & billing
+  - DRM & access control
+  - Adaptive bitrate
+  - Watch history & recommendations
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+Video streaming platforms must guarantee playback continuity, enforce content licensing through DRM, and gate premium content behind subscriptions. Testing spans CDN-delivered manifests, browser-native media APIs, licence server integrations, and billing lifecycle edge cases.
+
+**Typical stack:** React / Web Components player, HLS/DASH manifest via CDN, Widevine/FairPlay DRM licence server, Stripe subscription billing, recommendation microservice.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Catalogue** | Search, browse, genre filters, series/episode structure, metadata accuracy | User can't find content |
+| **Playback** | Play/pause/seek, quality switching, captions/subtitles, autoplay next episode | Black screen, spinner loop |
+| **Auth & access** | Subscription gates, free vs premium content, concurrent device limits | Unauthorised access, paying user blocked |
+| **DRM** | Valid licence loads, error on expired/invalid licence, offline download licence | Content pirates, legitimate user errors |
+| **Billing** | Free trial, subscription start, cancellation, invoice generation, card update | Surprise charges, failed renewals |
+| **Recommendations** | Personalised row appears, no crash when watch history is empty | Broken homepage for new users |
+
+## Test Pyramid for Video Streaming
+
+```
+Unit (60%):   Manifest URL builder, DRM key-system selection, billing proration logic
+Integration (30%): Licence server handshake, billing webhook handler, catalogue search API
+E2E (10%):    Login → browse catalogue → play video → verify captions → autoplay next
+```
+
+**Critical E2E tests (must pass before every deploy):**
+1. Premium content is accessible to subscribed user and blocked for free user
+2. Video player plays and seek to 30s works without buffering loop
+3. Captions toggle on/off and track language can be changed
+4. Subscription cancellation stops renewal charge
+5. New user homepage renders without watch history (no crash)
+
+## Common Failure Scenarios
+
+```
+1. Video player shows spinner forever when stream URL returns 403
+   Test: intercept manifest URL with page.route(), return 403, assert error message visible not infinite spinner
+
+2. Subtitle timing offset after seek
+   Test: seek to 00:01:30, wait for caption element, assert caption text matches expected line for that timestamp
+
+3. Concurrent device limit not enforced
+   Test: open same account in two browser contexts, play in both, assert second context receives device-limit error
+
+4. Trial cancellation still charges card at period end
+   Test: mock billing webhook for trial_end event after cancellation, assert no invoice created
+
+5. Autoplay doesn't trigger for next episode when DRM licence not pre-fetched
+   Test: let episode end, intercept licence request timing, assert next episode starts within 3s
+```
+
+## Playwright Patterns for Video Streaming
+
+```ts
+// Intercept manifest, return 403, verify player shows error not spinner
+test('player shows error message on 403 manifest', async ({ page }) => {
+  await page.route('**/*.m3u8', route => route.fulfill({ status: 403 }));
+  await page.goto('/watch/episode-1');
+  await page.getByRole('button', { name: 'Play' }).click();
+  // Error message must appear; spinner must not persist
+  await expect(page.getByTestId('player-error')).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId('player-spinner')).toBeHidden();
+});
+
+// Captions toggle via accessible role
+test('captions can be toggled on and off', async ({ page }) => {
+  await page.goto('/watch/episode-1');
+  await page.getByRole('button', { name: 'Play' }).click();
+  const captionsBtn = page.getByRole('button', { name: /captions/i });
+  await captionsBtn.click();
+  await expect(page.getByTestId('caption-track')).toBeVisible();
+  await captionsBtn.click();
+  await expect(page.getByTestId('caption-track')).toBeHidden();
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-streaming" questions={[
+  { q: "Why is testing the DRM licence flow challenging in Playwright and what is the practical workaround?", a: "DRM key systems (Widevine, FairPlay) require specific browser binaries and real licence server credentials — Chromium in Playwright supports Widevine only in full Chrome, not in the open-source Chromium build. The practical workaround is to mock the licence server endpoint with page.route() to return a fixture licence response, and test the player's error-handling branch separately by returning 403 from the mock. True DRM playback is validated in a dedicated browser lab or real-device farm." },
+  { q: "How do you test that a streaming platform enforces concurrent device limits?", a: "Create two Playwright browser contexts that share the same authenticated session (same cookies/storage). Navigate both contexts to the player page and trigger play in context one, then play in context two. Assert that context two receives a device-limit error (visible UI message or HTTP 403 from the stream endpoint). Use page.waitForResponse() in context two to capture the API rejection." },
+  { q: "What is the correct assertion pattern when testing that a video player does NOT show an infinite spinner?", a: "Assert two conditions: (1) the error state element is visible within a reasonable timeout — expect(page.getByTestId('player-error')).toBeVisible({ timeout: 5000 }) — and (2) the spinner element is hidden — expect(page.getByTestId('player-spinner')).toBeHidden(). Asserting only the error is present is insufficient because both could theoretically be visible simultaneously during a transition. Asserting only the absence of the spinner would pass even if neither state rendered." }
+]} />

@@ -1,0 +1,48 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : import.meta.env.BASE_URL + '/';
+const domains = (await getCollection('domains', d => d.data.status === 'complete'))
+  .sort((a, b) => a.data.title.localeCompare(b.data.title));
+const slugOf = (id: string) => id.replace(/\.mdx$/, '').split('/').pop()!;
+---
+<Base title="Domain Projects — pw·handbook" description="16 industry domains with real test strategies, failure scenarios, and production test pyramids.">
+  <section class="hero-sub">
+    <div class="wrap">
+      <div class="eyebrow">apply it <span>/ {domains.length} domains</span></div>
+      <h1>Real domains, real test strategies</h1>
+      <p class="lede">Each domain covers the test strategy, feature matrix, common failure scenarios, and the right test pyramid for that industry — applied to a real or representative application.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="domain-grid">
+        {domains.map(d => (
+          <a class="domain-card" href={`${base}domains/${slugOf(d.id)}/`}>
+            <h3>{d.data.title}</h3>
+            <p>{d.data.description}</p>
+            <ul class="features">
+              {d.data.features.slice(0, 3).map(f => <li>{f}</li>)}
+            </ul>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+.hero-sub { padding: 56px 0 40px; border-bottom: 1px solid var(--line); }
+.hero-sub h1 { font-size: clamp(28px, 4vw, 44px); font-weight: 800; margin: 12px 0; }
+section { padding: 56px 0; }
+.domain-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.domain-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 22px; text-decoration: none; color: var(--ink); display: block; transition: border-color .15s; }
+.domain-card:hover { border-color: var(--ember); }
+.domain-card h3 { margin: 0 0 8px; font-size: 17px; }
+.domain-card p { font-size: 13.5px; color: var(--muted); margin-bottom: 12px; }
+.features { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.features li { font-family: var(--mono); font-size: 11px; color: var(--faint); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+@media (max-width: 920px) { .domain-grid { grid-template-columns: 1fr; } }
+</style>

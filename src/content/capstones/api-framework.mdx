@@ -1,0 +1,179 @@
+---
+title: "API Testing Framework"
+description: "A structured APIRequestContext framework for REST APIs — schema validation, auth helpers, data factories, and contract testing with Zod."
+stack:
+  - Playwright APIRequestContext
+  - TypeScript
+  - Zod
+  - JSON Schema
+  - GitHub Actions
+order: 2
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Business Context
+
+A multi-service REST API platform requires automated coverage across every endpoint — user management, order processing, and product catalogue. Goals: full CRUD coverage of every endpoint, schema validation on every response body (not just status codes), clean auth token management without repeating login calls, and readable JUnit output for the CI system.
+
+Goals:
+- **Every response validated** against a Zod schema — type mismatches fail the test
+- **Auth tokens injected automatically** via a base client; tests never handle headers manually
+- **Data factories** produce valid payloads so tests stay readable
+- **Cleanup registry** ensures created resources are deleted even when a test fails
+
+## Architecture Overview
+
+| Layer | Responsibility |
+|---|---|
+| **BaseClient** | Wraps `APIRequestContext`; injects `Authorization` header; throws on non-2xx |
+| **Resource Clients** | `UserClient`, `OrderClient`, `ProductClient` — typed methods per endpoint |
+| **Zod Schemas** | One schema per resource; `.parse()` called on every response body |
+| **Data Factories** | Functions returning valid create/update payloads with sensible defaults |
+| **Cleanup Registry** | Array of teardown functions accumulated during a test; flushed in `afterEach` |
+| **Auth Fixture** | Calls login once per worker; exposes token to all clients |
+
+## Framework Structure
+
+```
+api-tests/
+├── clients/
+│   ├── base.client.ts
+│   ├── user.client.ts
+│   └── order.client.ts
+├── schemas/
+│   ├── user.schema.ts
+│   └── order.schema.ts
+├── factories/
+│   ├── user.factory.ts
+│   └── order.factory.ts
+├── fixtures/
+│   └── auth.fixture.ts
+├── tests/
+│   ├── users.spec.ts
+│   ├── orders.spec.ts
+│   └── auth.spec.ts
+└── playwright.config.ts
+```
+
+## Key Implementation Patterns
+
+**Base client with auth header injection** — every request carries the token automatically:
+
+```ts
+// clients/base.client.ts
+import { APIRequestContext } from '@playwright/test';
+
+export class BaseClient {
+  constructor(
+    protected request: APIRequestContext,
+    private token: string
+  ) {}
+
+  protected async get<T>(path: string, schema: ZodType<T>): Promise<T> {
+    const response = await this.request.get(path, {
+      headers: { Authorization: `Bearer ${this.token}` },
+    });
+    expect(response.ok()).toBeTruthy();
+    return schema.parse(await response.json());
+  }
+
+  protected async post<T>(path: string, body: unknown, schema: ZodType<T>): Promise<T> {
+    const response = await this.request.post(path, {
+      headers: { Authorization: `Bearer ${this.token}` },
+      data: body,
+    });
+    expect(response.ok()).toBeTruthy();
+    return schema.parse(await response.json());
+  }
+}
+```
+
+**Zod schema validation on every response** — parse throws if the shape is wrong:
+
+```ts
+// schemas/user.schema.ts
+import { z } from 'zod';
+
+export const UserSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  name: z.string().min(1),
+  role: z.enum(['admin', 'member', 'viewer']),
+  createdAt: z.string().datetime(),
+});
+
+export type User = z.infer<typeof UserSchema>;
+```
+
+**Factory pattern for test payloads** — readable tests, valid defaults:
+
+```ts
+// factories/user.factory.ts
+import { faker } from '@faker-js/faker';
+
+export function buildUser(overrides: Partial<CreateUserDto> = {}): CreateUserDto {
+  return {
+    email: faker.internet.email(),
+    name: faker.person.fullName(),
+    role: 'member',
+    ...overrides,
+  };
+}
+```
+
+**Cleanup registry** — resources deleted even if the test throws:
+
+```ts
+// fixtures/auth.fixture.ts (extended with cleanup)
+export const test = base.extend<{ cleanup: (fn: () => Promise<void>) => void }>({
+  cleanup: async ({}, use) => {
+    const fns: Array<() => Promise<void>> = [];
+    await use(fn => fns.push(fn));
+    for (const fn of fns.reverse()) {
+      await fn();
+    }
+  },
+});
+
+// usage in a test
+test('creates and deletes a user', async ({ userClient, cleanup }) => {
+  const user = await userClient.create(buildUser());
+  cleanup(() => userClient.delete(user.id));
+  // ... assertions
+});
+```
+
+## CI/CD Integration
+
+```yaml
+# .github/workflows/api-tests.yml
+jobs:
+  api-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      - run: npm ci
+      - run: npx playwright test --reporter=junit
+        env:
+          API_BASE_URL: ${{ secrets.STAGING_API_URL }}
+          API_ADMIN_TOKEN: ${{ secrets.STAGING_ADMIN_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: junit-results
+          path: results.xml
+      - uses: mikepenz/action-junit-report@v4
+        if: always()
+        with:
+          report_paths: results.xml
+```
+
+API tests run sequentially on a single runner — parallelism brings little benefit because the bottleneck is network latency, not CPU. JUnit XML output integrates with GitHub's PR check annotations and downstream dashboards.
+
+<QuizCard client:only="react" storageKey="cap-api" questions={[
+  { q: "Why call Zod's .parse() on every API response rather than just checking response.ok()?", a: "response.ok() only validates the HTTP status code. A 200 response with a missing required field, a wrong type, or an unexpected null will pass status-only checks and surface as a runtime bug in production. Zod .parse() validates the exact shape and types of the body, failing the test immediately when the contract drifts — which is the definition of contract testing." },
+  { q: "What problem does the cleanup registry pattern solve compared to afterEach hooks?", a: "An afterEach hook has no access to the specific resources created by a particular test — you'd need shared state or a global array. The cleanup fixture receives a registration function scoped to the test. Resources are cleaned up in reverse-creation order even when the test throws, without any shared mutable state between tests." },
+  { q: "Why does the base client's get() and post() return the Zod-parsed result rather than the raw response?", a: "Returning the parsed result means the caller receives a fully-typed TypeScript value (z.infer<typeof Schema>), not an unknown JSON blob. If parsing fails the method throws before the caller sees bad data. This collapses schema validation and type narrowing into one step, keeping resource client methods and tests clean of explicit parse calls." }
+]} />

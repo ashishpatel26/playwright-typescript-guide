@@ -1,0 +1,117 @@
+---
+title: "Logistics & Delivery"
+description: "Test strategies for shipment tracking, route optimisation, driver apps, warehouse management, and delivery notification systems."
+features:
+  - Shipment tracking
+  - Route optimisation
+  - Driver & fleet management
+  - Warehouse operations
+  - Delivery notifications
+  - Returns processing
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+Logistics systems are event-driven and geolocation-heavy. Testing covers real-time tracking updates via SSE or WebSocket, geofence triggers that fire on driver position changes, ETAs that recalculate dynamically, and the multi-party nature of a delivery (sender, carrier, recipient). The tracking widget is typically the highest-traffic public-facing feature — often serving millions of anonymous users with no authentication.
+
+**Typical stack:** Node.js or Go event bus, Redis Streams or Kafka for tracking events, PostgreSQL for shipment records, AWS SNS/SES for notifications, Google Maps Platform or HERE for routing, S3 for proof-of-delivery assets.
+
+The low E2E share (10%) reflects that tracking logic (ETA, geofence, routing) is algorithmic and best tested at unit/integration level — E2E is for the customer-facing tracking page and returns initiation flow.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Tracking** | Parcel lookup, status timeline, live map position, ETA accuracy | Customer distrust, support call volume |
+| **Driver app** | Accept delivery, mark delivered, capture signature/photo, exception report | Failed delivery records, dispute resolution |
+| **Route** | Stops list, resequencing, geofence entry/exit events | Missed stops, wrong order sequence |
+| **Warehouse** | Scan in/out, pick list generation, inventory adjustment | Mis-shipped parcels, inventory discrepancy |
+| **Notifications** | SMS, email, push on each status change, opt-out respected | Missed notifications, spam complaints |
+| **Returns** | QR code generation, drop-off location lookup, refund trigger on receipt | Delayed refunds, lost returns |
+
+## Test Pyramid for Logistics & Delivery
+
+```
+Unit (55%):        ETA calculation, route scoring, geofence polygon logic, parcel ID normalisation
+Integration (35%): Tracking event API pipeline, notification triggers, geofence webhooks, signature upload
+E2E (10%):         Customer tracking page, returns initiation, parcel lookup edge cases
+```
+
+**Critical E2E tests (must pass before every deploy):**
+1. Parcel lookup returns correct status timeline for a known tracking number
+2. Status change event triggers SMS and email notification within SLA
+3. Returns flow generates QR code and registers drop-off intent
+4. Tracking page renders correctly with no events (pre-collection state)
+5. ETA displays correctly when delivery is past the original estimate
+
+## Common Failure Scenarios
+
+```
+1. Tracking page shows "Out for delivery" but event webhook not delivered → stale status
+   Test: post status-change event via API, reload tracking page, assert new status visible within timeout
+
+2. ETA countdown shows negative time (delivery past ETA not handled in UI)
+   Test: mock API to return pastDueEta, assert UI shows "Delayed" or a positive elapsed message, not "-00:12"
+
+3. Signature capture image not saved (S3 upload timeout silently swallowed)
+   Test: intercept S3 upload with page.route(), return a timeout, complete delivery flow, assert error shown to driver
+
+4. Returns QR code expires before customer reaches drop-off (short TTL)
+   Test: generate QR code, advance clock past TTL with page.clock.set(), attempt to scan, assert expiry error
+
+5. Parcel ID lookup is case-sensitive (AB123 fails when user enters ab123)
+   Test: look up tracking number in lowercase, mixed case, and uppercase, assert all return same result
+```
+
+## Playwright Patterns for Logistics
+
+```ts
+// Mock geolocation API for driver position updates
+test('tracking map updates when driver position changes', async ({ page, context }) => {
+  await context.grantPermissions(['geolocation']);
+  await context.setGeolocation({ latitude: 51.5074, longitude: -0.1278 });
+
+  await page.goto('/track/AB123456');
+  const initialPin = await page.locator('[data-testid="driver-pin"]').boundingBox();
+
+  // Simulate driver moving
+  await context.setGeolocation({ latitude: 51.5150, longitude: -0.1200 });
+  await page.waitForTimeout(2000); // allow SSE update
+
+  const updatedPin = await page.locator('[data-testid="driver-pin"]').boundingBox();
+  expect(updatedPin?.x).not.toEqual(initialPin?.x);
+});
+
+// Test tracking page with intercepted SSE stream
+test('tracking page reflects live status update via SSE', async ({ page }) => {
+  await page.route('**/api/track/*/stream', route => {
+    route.fulfill({
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+      body: 'data: {"status":"OUT_FOR_DELIVERY","eta":"14:30"}\n\n'
+    });
+  });
+
+  await page.goto('/track/AB123456');
+  await expect(page.getByText('Out for delivery')).toBeVisible();
+  await expect(page.getByText('14:30')).toBeVisible();
+});
+
+// Test parcel lookup case-insensitivity
+test('parcel lookup is case-insensitive', async ({ page }) => {
+  for (const input of ['AB123456', 'ab123456', 'Ab123456']) {
+    await page.goto('/track');
+    await page.getByLabel('Tracking number').fill(input);
+    await page.getByRole('button', { name: 'Track' }).click();
+    await expect(page.getByTestId('status-timeline')).toBeVisible();
+  }
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-logistics" questions={[
+  { q: "How do you test a real-time tracking page that receives updates via Server-Sent Events (SSE)?", a: "Use page.route() to intercept the SSE endpoint and return a manually crafted event stream response with Content-Type: text/event-stream. Craft the body as SSE-formatted data events (e.g., 'data: {\"status\":\"OUT_FOR_DELIVERY\"}\n\n'). Then assert that the UI reflects the status from the injected event. For WebSocket equivalents, use page.evaluate() to dispatch events on the WebSocket instance directly." },
+  { q: "What is the correct way to test geofence-triggered logic in Playwright?", a: "Use context.setGeolocation() to set the browser's reported GPS position inside and outside the geofence polygon. Pair this with context.grantPermissions(['geolocation']) to avoid permission prompts. For server-side geofence webhooks (not browser-based), POST a synthetic position update to the geofence event API in your test setup and assert the resulting webhook or status change." },
+  { q: "Why is parcel ID case-sensitivity a high-risk failure scenario in logistics, and how should it be tested?", a: "Tracking numbers are typically printed on labels and copied by hand or OCR — case errors are common. If the lookup is case-sensitive, a customer entering 'ab123456' instead of 'AB123456' gets a 'not found' error, creating a support ticket. Test by iterating over lowercase, uppercase, and mixed-case variants of the same valid tracking number and asserting all three return the correct shipment record." }
+]} />

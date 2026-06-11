@@ -1,0 +1,115 @@
+---
+title: "SaaS Dashboard"
+description: "Test strategies for multi-tenant dashboards, role-based access control, data visualisations, onboarding flows, and subscription management."
+features:
+  - Multi-tenancy & RBAC
+  - Data visualisations
+  - Onboarding & setup
+  - Subscription & billing
+  - Team management
+  - Integrations & webhooks
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+SaaS dashboards have a unique testing challenge: multi-tenancy means tenant A must never see tenant B's data, even under race conditions or misconfigured caching. Complex RBAC (admin vs member vs viewer) must be enforced at the API layer — not just hidden in the UI. Data visualisations are hard to assert on because they render to canvas or SVG with no readable text nodes.
+
+**Typical stack:** React or Vue SPA, REST or GraphQL API, PostgreSQL with row-level security or schema-per-tenant isolation, Stripe Billing for subscriptions, third-party OAuth integrations (Slack, GitHub, Google Workspace).
+
+Most testing effort belongs at the API and integration layer for RBAC and data isolation. E2E covers onboarding and billing flows where multi-step UI state is the primary risk.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **RBAC** | Admin actions blocked for member, viewer read-only, role upgrade/downgrade | Privilege escalation, data deletion |
+| **Multi-tenancy** | API always scoped to tenant, no cross-tenant data leakage after switch | Data breach, compliance failure |
+| **Data viz** | Chart renders with correct data, empty state, loading skeleton, error state | Silent wrong numbers |
+| **Onboarding** | Wizard step progression, required fields enforced, skip/resume | Abandoned setup, misconfigured accounts |
+| **Billing** | Plan upgrade/downgrade, seat limits enforced, invoice generation | Revenue leakage, overcharging |
+| **Integrations** | OAuth connect/disconnect, webhook delivery, re-auth on token expiry | Broken integrations, missed events |
+
+## Test Pyramid for SaaS Dashboard
+
+```
+Unit (50%):        RBAC rules, data transformation, billing proration, webhook signing
+Integration (40%): Tenant isolation in API, webhook delivery pipeline, OAuth token refresh
+E2E (10%):         Onboarding wizard, billing plan change, team member invite flow
+```
+
+**Critical E2E tests (must pass before every deploy):**
+1. Admin can invite member, member sees reduced permission set in UI
+2. Tenant A cannot access Tenant B data after authenticated switch
+3. Onboarding wizard completes successfully with all required fields
+4. Upgrade from free to paid plan reflects new feature access immediately
+5. Webhook fires on resource create, delivery log shows 200 response
+
+## Common Failure Scenarios
+
+```
+1. Admin action available in UI for non-admin role (RBAC not enforced on frontend)
+   Test: log in as member, assert delete/admin buttons absent; call delete API directly, assert 403
+
+2. Chart shows previous tenant's data after account switch (cache not scoped to tenant)
+   Test: switch tenant via API, reload dashboard, intercept chart data request, assert tenant ID in URL
+
+3. Onboarding wizard allows skip of required step (validation only on final submit)
+   Test: click Next without filling required field, assert step does not advance and error is shown
+
+4. Seat limit not enforced when inviting members via bulk CSV import
+   Test: upload CSV with members exceeding seat limit, assert import fails with seat limit error
+
+5. Webhook URL update doesn't flush pending queue (old URL receives events)
+   Test: update webhook URL, trigger event, assert only new URL receives the payload
+```
+
+## Playwright Patterns for SaaS Dashboard
+
+```ts
+// Test RBAC with two fixture users (admin + member)
+test('member cannot see delete controls', async ({ browser }) => {
+  const adminCtx = await browser.newContext({ storageState: 'admin.json' });
+  const memberCtx = await browser.newContext({ storageState: 'member.json' });
+
+  const adminPage = await adminCtx.newPage();
+  const memberPage = await memberCtx.newPage();
+
+  await adminPage.goto('/dashboard/resources');
+  await expect(adminPage.getByRole('button', { name: 'Delete' })).toBeVisible();
+
+  await memberPage.goto('/dashboard/resources');
+  await expect(memberPage.getByRole('button', { name: 'Delete' })).toHaveCount(0);
+
+  await adminCtx.close();
+  await memberCtx.close();
+});
+
+// Test tenant isolation with two browser contexts
+test('tenant isolation: tenant A cannot see tenant B data', async ({ browser }) => {
+  const ctxA = await browser.newContext({ storageState: 'tenantA.json' });
+  const ctxB = await browser.newContext({ storageState: 'tenantB.json' });
+
+  const pageA = await ctxA.newPage();
+  await pageA.goto('/api/resources');
+  const bodyA = await pageA.textContent('body');
+
+  const pageB = await ctxB.newPage();
+  await pageB.goto('/api/resources');
+  const bodyB = await pageB.textContent('body');
+
+  expect(bodyA).not.toContain('tenant-b-resource-id');
+  expect(bodyB).not.toContain('tenant-a-resource-id');
+
+  await ctxA.close();
+  await ctxB.close();
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-saas" questions={[
+  { q: "Why is it insufficient to only test RBAC enforcement at the UI layer?", a: "UI hiding of controls is trivially bypassed — a member can call the delete API directly via curl or Playwright's request API. RBAC must be enforced server-side. Tests should both assert the button is absent in the UI AND directly call the restricted API endpoint with the member's auth token and assert a 403 Forbidden response." },
+  { q: "How do you assert a chart shows the correct data when it renders to an SVG or canvas element?", a: "Intercept the chart's underlying data API request using page.route() or page.waitForResponse(), and assert the JSON payload contains the expected values. For SVG charts, query specific elements (e.g., bar heights, axis labels via aria or data-testid attributes). Avoid pixel-snapshot testing for charts — it is brittle across rendering engines." },
+  { q: "What is the most reliable way to test that a seat limit is enforced during bulk member import?", a: "Use the API or UI to set the tenant to one seat below its limit, then attempt a bulk CSV import via the UI (or directly via the import API endpoint) containing enough members to exceed the limit. Assert the API returns an error (e.g., 422 with a seat limit message) and that no new members were added — verify by calling the members list API and checking the count." }
+]} />

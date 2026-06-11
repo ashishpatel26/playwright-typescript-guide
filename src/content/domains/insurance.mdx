@@ -1,0 +1,115 @@
+---
+title: "Insurance Portal"
+description: "Test strategies for quote engines, policy management, claims processing, document management, and regulatory compliance."
+features:
+  - Quote & comparison engine
+  - Policy management
+  - Claims processing
+  - Document management
+  - Premium payments
+  - Regulatory compliance
+status: complete
+---
+
+import QuizCard from '../../components/react/QuizCard';
+
+## Domain Overview
+
+Insurance portals are form-heavy, rule-driven, and heavily regulated. Quote engines have complex underwriting rules (risk factors, exclusions, pricing bands). Claims require document upload, status tracking, and settlement. GDPR and FCA/state insurance regulations govern data handling. Accessibility is critical — policy documents must be readable.
+
+**Typical stack:** Angular / React frontend, rules engine (Drools or custom), document generation (Docmosis / iText), payment via GoCardless or Stripe, claims managed via Guidewire or custom.
+
+## Key Test Areas
+
+| Area | What to test | Risk |
+|---|---|---|
+| **Quote** | Personal details, risk questions, coverage options, premium calculation, compare | Wrong premium, regulatory breach |
+| **Policy** | View policy, schedule, endorsements, renewal, cancel | Wrong cover shown, illegal cancellation |
+| **Claims** | FNOL, document upload, adjuster assignment, status, settlement | Claim lost, underpayment |
+| **Documents** | Policy doc PDF, certificate of insurance, claim forms, download/email | Wrong policy wording, missing cert |
+| **Payments** | Premium payment, DD setup, instalment plan, late payment handling | Double charge, lapsed policy |
+| **Compliance** | Policy wording accuracy, cooling-off period, right to cancel, data deletion | Regulatory fine, legal liability |
+
+## Test Pyramid for Insurance Portal
+
+```
+Unit (60%):        Underwriting rules, premium calculation, eligibility
+Integration (30%): Claims API, payment gateway, document generation
+E2E (10%):         Get quote → purchase policy → file claim
+```
+
+## Common Failure Scenarios
+
+```
+1. Quote price changes between quote step 1 and summary page (rule evaluated twice)
+   Test: capture price on step 1, proceed to summary without changing inputs, assert prices match
+
+2. Claim submitted but document not attached (upload appeared to succeed)
+   Test: intercept upload API response, assert claim record contains document reference ID
+
+3. Cooling-off period not applied to add-on purchase
+   Test: purchase add-on, assert cancellation option with full refund available for statutory period
+
+4. Policy renewal email contains previous year's premium
+   Test: update premium before renewal run, assert renewal email reflects new premium amount
+
+5. DD payment date update doesn't apply to next payment (only future ones)
+   Test: update DD date after billing cycle opens, assert next payment still uses updated date
+```
+
+## Playwright Patterns for Insurance Portal
+
+```ts
+// Multi-step quote wizard with form state preserved on back navigation
+test('quote state is preserved when navigating back', async ({ page }) => {
+  await page.goto('/quote/start');
+  // Step 1 — personal details
+  await page.getByLabel('Date of birth').fill('01/01/1985');
+  await page.getByLabel('Postcode').fill('SW1A 1AA');
+  await page.getByRole('button', { name: 'Next' }).click();
+  // Step 2 — risk questions
+  await page.getByLabel('No claims bonus (years)').selectOption('5');
+  await page.getByRole('button', { name: 'Next' }).click();
+  // Step 3 — navigate back
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page.getByLabel('No claims bonus (years)')).toHaveValue('5');
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page.getByLabel('Date of birth')).toHaveValue('01/01/1985');
+  await expect(page.getByLabel('Postcode')).toHaveValue('SW1A 1AA');
+});
+
+// Document upload with page.route to simulate virus scan delay
+test('claim upload shows pending state during virus scan', async ({ page }) => {
+  await page.route('**/api/claims/documents/upload', async route => {
+    // Simulate a 3-second virus scan delay
+    await new Promise(res => setTimeout(res, 3000));
+    await route.fulfill({ json: { status: 'clean', documentId: 'doc-123' } });
+  });
+  await page.goto('/claims/new');
+  const fileInput = page.locator('input[type="file"]');
+  await fileInput.setInputFiles({ name: 'damage.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('fake') });
+  await expect(page.getByTestId('upload-scanning')).toBeVisible();
+  await expect(page.getByTestId('upload-complete')).toBeVisible({ timeout: 10000 });
+});
+
+// Cooling-off period date calculation
+test('cooling-off period cancellation available within 14 days', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-06-01T10:00:00Z') });
+  await page.goto('/policy/POL-001');
+  // Within 14-day cooling-off period — cancel with full refund must be available
+  await expect(page.getByRole('button', { name: 'Cancel policy' })).toBeVisible();
+  await expect(page.getByText('Full refund')).toBeVisible();
+
+  // Advance past 14 days
+  await page.clock.fastForward(15 * 24 * 60 * 60 * 1000);
+  await page.reload();
+  // Cooling-off cancel option should be gone; standard cancel may remain
+  await expect(page.getByText('Full refund')).not.toBeVisible();
+});
+```
+
+<QuizCard client:only="react" storageKey="domain-insurance" questions={[
+  { q: "Why do insurance quote prices sometimes differ between step 1 and the summary page, and how do you write a test to catch this?", a: "The underwriting rules engine is called at each step to re-evaluate risk. If input data or session state drifts between calls (e.g. a default assumption changes), the premium recalculates. Test by capturing the quoted premium displayed on step 1 via page.textContent, completing all steps without changing any inputs, and asserting the summary page premium exactly matches. Any discrepancy means the rule engine is being called with different inputs mid-session." },
+  { q: "How do you reliably test that a document is actually attached to a claim, not just that the upload UI showed success?", a: "Intercept the claim submission API call (page.route or page.waitForRequest) and inspect the payload — assert it contains a documentId or document reference returned by the upload endpoint. Also intercept the upload endpoint response to confirm the documentId was non-null. UI-only assertion (upload appeared to succeed) is insufficient because the reference can be dropped between the upload callback and the claim submission payload." },
+  { q: "What makes cooling-off period testing difficult and how does page.clock solve it?", a: "The cooling-off period (typically 14 days statutory) requires time to pass to test expiry — waiting in real time is impractical. Use page.clock.install() to freeze the browser clock at policy purchase date, assert the full-refund cancellation option is present, then call page.clock.fastForward(15 * 24 * 60 * 60 * 1000) to jump past 14 days, reload, and assert the option is gone. This tests both the presence and absence conditions deterministically without any real wait." }
+]} />
