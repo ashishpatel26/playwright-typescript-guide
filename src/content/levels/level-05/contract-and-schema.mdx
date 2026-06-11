@@ -1,0 +1,135 @@
+---
+title: "Contract Testing & Schema Validation"
+level: 5
+order: 4
+description: "Validate API response shapes with JSON Schema and understand consumer-driven contract testing."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## What Is Contract Testing?
+
+A **contract** is the agreed-upon interface between a consumer (frontend, mobile app) and a provider (API). Contract testing verifies both sides honour it — before integration, in CI.
+
+```
+Consumer                Provider
+────────                ────────
+Frontend app  ←──────→  REST API
+               contract
+               (shape of
+               requests &
+               responses)
+```
+
+**Two levels:**
+1. **Schema validation** — assert response matches expected structure (fields, types)
+2. **Consumer-driven contract testing (CDCT)** — consumer publishes expectations; provider verifies them (Pact, PactFlow)
+
+## JSON Schema Validation with Ajv
+
+```ts
+import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
+import { test, expect } from '@playwright/test';
+
+const ajv = new Ajv();
+addFormats(ajv);
+
+const bookingSchema = {
+  type: 'object',
+  required: ['firstname', 'lastname', 'totalprice', 'depositpaid', 'bookingdates'],
+  properties: {
+    firstname:   { type: 'string' },
+    lastname:    { type: 'string' },
+    totalprice:  { type: 'number' },
+    depositpaid: { type: 'boolean' },
+    bookingdates: {
+      type: 'object',
+      required: ['checkin', 'checkout'],
+      properties: {
+        checkin:  { type: 'string', format: 'date' },
+        checkout: { type: 'string', format: 'date' },
+      },
+    },
+  },
+};
+
+test('booking response matches schema', async ({ request }) => {
+  const res = await request.get('https://restful-booker.herokuapp.com/booking/1');
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  const valid = ajv.validate(bookingSchema, body);
+  if (!valid) throw new Error(ajv.errorsText());
+});
+```
+
+## TypeScript Interfaces as Living Contracts
+
+Use TypeScript to enforce shape at compile time:
+
+```ts
+interface Booking {
+  firstname: string;
+  lastname: string;
+  totalprice: number;
+  depositpaid: boolean;
+  bookingdates: { checkin: string; checkout: string };
+  additionalneeds?: string;
+}
+
+test('cast and assert booking shape', async ({ request }) => {
+  const res = await request.get('/booking/1');
+  const body = (await res.json()) as Booking;
+  expect(typeof body.firstname).toBe('string');
+  expect(typeof body.totalprice).toBe('number');
+});
+```
+
+## Consumer-Driven Contract Testing (CDCT)
+
+**Problem:** Integration tests catch contract breaks late (deployed environment). CDCT catches them in CI, per service.
+
+**Flow with Pact:**
+1. Consumer writes a test describing what it expects from the provider
+2. Pact generates a contract file (`*.json`)
+3. Provider verifies its implementation against the contract
+4. Pact Broker stores and versions contracts
+
+```ts
+// consumer pact test (simplified)
+await provider.addInteraction({
+  state: 'booking exists',
+  uponReceiving: 'a request for booking 1',
+  withRequest: { method: 'GET', path: '/booking/1' },
+  willRespondWith: {
+    status: 200,
+    body: like({ firstname: 'Jane', totalprice: 150 }),
+  },
+});
+```
+
+## Schema Drift Detection
+
+Run schema validation in CI against production snapshots:
+
+```ts
+// record snapshot
+const snapshot = await (await request.get('/api/schema')).json();
+fs.writeFileSync('schema-snapshot.json', JSON.stringify(snapshot));
+
+// compare in next CI run
+const current = await (await request.get('/api/schema')).json();
+const previous = JSON.parse(fs.readFileSync('schema-snapshot.json', 'utf8'));
+expect(current).toMatchObject(previous); // new fields ok; removed fields fail
+```
+
+<QuizCard client:only="react" storageKey="api-contract" questions={[
+  { q: "What is the difference between schema validation and consumer-driven contract testing?", a: "Schema validation checks response shape in the consumer's tests. CDCT publishes the consumer's expectations as a contract the provider must verify — catching breaks before deployment." },
+  { q: "Why does JSON Schema validation catch bugs that `toMatchObject` misses?", a: "`toMatchObject` only checks that expected keys are present. JSON Schema also validates types, formats, required fields, and disallows unexpected properties if `additionalProperties: false`." },
+  { q: "A provider deploys a change that renames `totalprice` to `total_price`. Which test strategy catches this earliest?", a: "Consumer-driven contract testing (CDCT) — the provider's CI runs the contract verification step and fails before the change reaches staging.", senior: "CDCT requires both teams to adopt the tooling (Pact, PactFlow). Schema validation in the consumer's integration tests is a lighter-weight first step." },
+  { q: "How do `ajv-formats` help with date fields?", a: "Adds `format: 'date'` / `format: 'date-time'` validators to Ajv. Without it, `format` keywords are ignored and `'not-a-date'` would pass a `{ type: 'string', format: 'date' }` schema." }
+]} />

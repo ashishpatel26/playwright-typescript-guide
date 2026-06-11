@@ -1,0 +1,129 @@
+---
+title: "Hybrid UI + API Flows"
+level: 5
+order: 6
+description: "Combine API calls with browser actions to build efficient, stable end-to-end test flows."
+duration: "35 min"
+status: complete
+widgets:
+  - diagram
+  - quiz
+---
+
+import MermaidDiagram from '../../../components/react/MermaidDiagram';
+import QuizCard from '../../../components/react/QuizCard';
+
+## Why Hybrid Tests?
+
+Pure UI tests are slow — every step goes through the browser. Pure API tests miss rendering bugs. **Hybrid tests** use the API for setup/teardown and the browser only for the UI assertion that matters.
+
+<MermaidDiagram client:only="react" chart={`flowchart LR\n  A["API: Create test data"] --> B["API: Authenticate → get token"]\n  B --> C["Browser: Navigate to page"]\n  C --> D["Browser: Assert UI renders correctly"]\n  D --> E["API: Verify backend state"]\n  E --> F["API: Teardown / delete data"]\n  style A stroke:#6BB5FF\n  style B stroke:#6BB5FF\n  style C stroke:#F05133\n  style D stroke:#F05133\n  style E stroke:#6BB5FF\n  style F stroke:#6BB5FF`} />
+
+## Pattern: API Setup → UI Assertion
+
+```ts
+test('newly created booking appears in admin UI', async ({ page, request }) => {
+  // 1. API setup
+  const token = await getAuthToken(request);
+  const res = await request.post('/booking', {
+    headers: { Cookie: `token=${token}` },
+    data: {
+      firstname: 'Alice',
+      lastname: 'Smith',
+      totalprice: 200,
+      depositpaid: true,
+      bookingdates: { checkin: '2025-06-01', checkout: '2025-06-07' },
+    },
+  });
+  const { bookingid } = await res.json();
+
+  // 2. Browser assertion
+  await page.goto('/admin/bookings');
+  await expect(page.getByText('Alice Smith')).toBeVisible();
+  await expect(page.getByText('$200')).toBeVisible();
+
+  // 3. API teardown
+  await request.delete(`/booking/${bookingid}`, {
+    headers: { Cookie: `token=${token}` },
+  });
+});
+```
+
+## Pattern: UI Action → API Verification
+
+```ts
+test('UI delete updates backend', async ({ page, request }) => {
+  // 1. API setup
+  const { bookingid } = await createBooking(request);
+
+  // 2. UI action
+  await page.goto(`/admin/bookings/${bookingid}`);
+  await page.getByRole('button', { name: 'Delete' }).click();
+  await page.getByRole('button', { name: 'Confirm' }).click();
+  await expect(page.getByText('Booking deleted')).toBeVisible();
+
+  // 3. API verification
+  const check = await request.get(`/booking/${bookingid}`);
+  expect(check.status()).toBe(404);
+});
+```
+
+## Sharing Auth Between Browser and API
+
+```ts
+// playwright.config.ts
+export default defineConfig({
+  use: {
+    storageState: 'playwright/.auth/user.json',
+  },
+});
+```
+
+```ts
+// The `request` fixture in a test ALSO uses storageState cookies —
+// browser and API context share the same session automatically
+test('shared auth', async ({ page, request }) => {
+  // Both use cookies from storageState
+  await page.goto('/dashboard');             // browser — authenticated
+  const res = await request.get('/api/me'); // API — same session
+  expect(res.ok()).toBe(true);
+});
+```
+
+## Performance Impact
+
+| Approach | Steps in browser | Typical duration |
+|---|---|---|
+| Pure UI test | All steps | 8–15 s |
+| Hybrid (API setup) | UI assertion only | 2–4 s |
+| Pure API test | 0 | 0.2–0.5 s |
+
+Hybrid tests are 3–5× faster than pure UI tests while still catching rendering bugs.
+
+## Database Validation
+
+After a UI action, query the database directly to assert backend state (covered in L6):
+
+```ts
+// With a database helper
+test('UI form submission persists to DB', async ({ page, db }) => {
+  await page.goto('/contact');
+  await page.fill('[name=email]', 'test@example.com');
+  await page.click('[type=submit]');
+  await expect(page.getByText('Message sent')).toBeVisible();
+
+  // DB assertion
+  const row = await db.query(
+    `SELECT * FROM contact_submissions WHERE email = $1`,
+    ['test@example.com']
+  );
+  expect(row.rows).toHaveLength(1);
+});
+```
+
+<QuizCard client:only="react" storageKey="api-hybrid" questions={[
+  { q: "What is the main advantage of hybrid UI+API tests over pure UI tests?", a: "3–5× faster: API handles setup/teardown (no browser overhead), browser handles only the UI assertion. Also more stable — API setup doesn't flake on UI timing issues." },
+  { q: "In a hybrid test, which steps should use the API vs the browser?", a: "API: create test data, authenticate, clean up. Browser: only the UI interaction or assertion being tested. Rule: use the browser only where the test must verify something visual." },
+  { q: "How does `storageState` allow a Playwright `request` fixture and `page` fixture to share authentication?", a: "Both fixtures read the same `storageState` file (cookies + localStorage). The API context attaches those cookies to requests, matching the browser session." },
+  { q: "Why verify backend state via API after a UI delete action, rather than just checking the UI?", a: "UI may show 'deleted' optimistically before the backend confirms. API verification ensures the backend actually removed the record, not just the frontend rendering.", senior: "This pattern also catches silent failures: a UI that hides the row on 4xx response would look correct but leave data in the DB." }
+]} />

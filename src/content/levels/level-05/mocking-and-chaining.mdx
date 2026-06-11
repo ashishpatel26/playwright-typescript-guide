@@ -1,0 +1,130 @@
+---
+title: "API Mocking & Chaining"
+level: 5
+order: 5
+description: "Mock network responses in browser tests and chain API calls to build dependent test data."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Two Types of Mocking
+
+| | `page.route()` | Mock server (MSW, Nock) |
+|---|---|---|
+| Scope | Browser network layer | Node.js / process level |
+| Use | UI tests — intercept XHR/fetch | API unit/integration tests |
+| Persistence | Per test / page | Across test suite |
+| HTTPS | ✅ (Playwright handles certs) | Needs extra config |
+
+## `page.route()` — Browser Intercept
+
+```ts
+test('cart shows error when checkout API fails', async ({ page }) => {
+  await page.route('**/api/checkout', (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'Service unavailable' }),
+    })
+  );
+
+  await page.goto('/cart');
+  await page.getByRole('button', { name: 'Checkout' }).click();
+  await expect(page.getByText('Service unavailable')).toBeVisible();
+});
+```
+
+## Partial Mocking — Modify Real Response
+
+```ts
+test('inject extra product into real API response', async ({ page }) => {
+  await page.route('**/api/products', async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    body.push({ id: 999, name: 'Test Product', price: 0 });
+    await route.fulfill({ response: res, json: body });
+  });
+
+  await page.goto('/products');
+  await expect(page.getByText('Test Product')).toBeVisible();
+});
+```
+
+## API Chaining
+
+Create dependent resources by chaining API calls — each response feeds the next:
+
+```ts
+test('order flow: create user → create product → place order → verify', async ({ request }) => {
+  // Step 1: Create user
+  const userRes = await request.post('/users', {
+    data: { name: 'Test User', email: 'test@example.com' },
+  });
+  const { id: userId } = await userRes.json();
+
+  // Step 2: Create product
+  const productRes = await request.post('/products', {
+    data: { name: 'Widget', price: 9.99, stock: 10 },
+  });
+  const { id: productId } = await productRes.json();
+
+  // Step 3: Place order (uses both IDs)
+  const orderRes = await request.post('/orders', {
+    data: { userId, productId, quantity: 2 },
+  });
+  expect(orderRes.status()).toBe(201);
+  const { id: orderId } = await orderRes.json();
+
+  // Step 4: Verify order
+  const verify = await request.get(`/orders/${orderId}`);
+  const order = await verify.json();
+  expect(order.userId).toBe(userId);
+  expect(order.total).toBe(19.98);
+});
+```
+
+## Teardown with `test.afterEach`
+
+Clean up created resources:
+
+```ts
+let createdIds: string[] = [];
+
+test.afterEach(async ({ request }) => {
+  for (const id of createdIds.reverse()) {
+    await request.delete(`/bookings/${id}`);
+  }
+  createdIds = [];
+});
+
+test('create and verify booking', async ({ request }) => {
+  const res = await request.post('/bookings', { data: { /* ... */ } });
+  const { id } = await res.json();
+  createdIds.push(id);
+  // ... test assertions
+});
+```
+
+## Route Abort and Delay
+
+```ts
+// Abort — simulate network failure
+await page.route('**/api/analytics', (route) => route.abort());
+
+// Delay — simulate slow API
+await page.route('**/api/feed', async (route) => {
+  await new Promise((r) => setTimeout(r, 3000));
+  await route.continue();
+});
+```
+
+<QuizCard client:only="react" storageKey="api-mock" questions={[
+  { q: "When should you use `page.route()` vs a mock server like MSW?", a: "`page.route()` intercepts at the browser level — ideal for UI tests where you control a specific page's network. MSW/Nock intercepts at the Node.js process level — ideal for API-only tests or when the same mock needs to apply across many pages." },
+  { q: "How do you modify a real API response rather than replacing it entirely?", a: "Call `route.fetch()` to get the real response, mutate the JSON, then call `route.fulfill({ response: res, json: modified })`. The `response` option copies status/headers from the real response." },
+  { q: "What is API chaining and why is it preferable to hardcoded test data IDs?", a: "API chaining creates test data dynamically via API calls, using each response's ID in the next request. Hardcoded IDs break when the test environment is reset — chaining is self-contained and repeatable." },
+  { q: "How do you clean up API-created resources after a test?", a: "Track created IDs in an array, then delete them in `test.afterEach` in reverse order (delete children before parents to avoid FK constraint errors)." }
+]} />
