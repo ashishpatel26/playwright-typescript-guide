@@ -1,0 +1,193 @@
+---
+title: Functions & Async/Await
+level: 1
+order: 2
+description: Function types, arrow functions, and the async/await patterns that every Playwright test uses — with real examples from test fixtures and page objects.
+duration: 30 min
+status: complete
+widgets: ['ts-playground', 'quiz']
+---
+
+import TsPlayground from '../../../components/react/TsPlayground';
+import QuizCard from '../../../components/react/QuizCard';
+import Tip from '../../../components/astro/Tip.astro';
+
+## Function signatures
+
+TypeScript functions declare the types of their parameters and return value:
+
+```ts
+// Named function with typed params and return
+function validateAge(age: number): boolean {
+  return age >= 18 && age <= 65;
+}
+
+// Arrow function — same semantics, shorter syntax
+const validateAge = (age: number): boolean => age >= 18 && age <= 65;
+
+// Optional parameter (must come after required params)
+function login(username: string, password?: string): void {
+  // password may be undefined
+}
+
+// Default parameter
+function navigate(url: string, timeout: number = 30_000): void {
+  // timeout defaults to 30_000 if not provided
+}
+
+// Rest parameter — collects remaining args into an array
+function logSteps(...steps: string[]): void {
+  steps.forEach((s, i) => console.log(`${i + 1}. ${s}`));
+}
+```
+
+## Arrow functions
+
+```ts
+// Arrow function — concise for callbacks
+const double = (n: number): number => n * 2;
+
+// No return type needed when inferred
+const greet = (name: string) => `Hello, ${name}`;
+
+// No parens needed for single parameter (style preference — parens are safer)
+const square = (n: number) => n * n;
+
+// Multi-line arrow function needs curly braces and explicit return
+const processResult = (status: string): string => {
+  if (status === 'pass') return '✓';
+  if (status === 'fail') return '✕';
+  return '○';
+};
+```
+
+## Promises and async/await
+
+Playwright is entirely async. Every page interaction returns a Promise.
+
+```ts
+// Promise<T> — represents a value that will be available later
+function fetchUser(id: number): Promise<{ name: string; email: string }> {
+  return fetch(`/api/users/${id}`).then(r => r.json());
+}
+
+// async/await — syntactic sugar over Promises
+async function fetchUser(id: number): Promise<{ name: string; email: string }> {
+  const response = await fetch(`/api/users/${id}`);
+  return response.json();
+}
+
+// In Playwright — every test callback is async
+test('user can log in', async ({ page }) => {
+  await page.goto('https://www.saucedemo.com');
+  await page.getByPlaceholder('Username').fill('standard_user');
+  await page.getByPlaceholder('Password').fill('secret_sauce');
+  await page.getByRole('button', { name: 'Login' }).click();
+  await expect(page.getByText('Products')).toBeVisible();
+});
+```
+
+<Tip>Every `await` in a Playwright test is a checkpoint. If you forget `await`, the assertion runs before the action completes — a common source of flakiness.</Tip>
+
+## Error handling in async code
+
+```ts
+// try/catch wraps awaited operations
+async function safeNavigate(page: Page, url: string): Promise<boolean> {
+  try {
+    await page.goto(url, { timeout: 5_000 });
+    return true;
+  } catch (error) {
+    console.error(`Navigation failed: ${url}`, error);
+    return false;
+  }
+}
+
+// Parallel async operations
+async function runParallel(page: Page): Promise<void> {
+  // await both concurrently — faster than sequential awaits
+  const [title, isVisible] = await Promise.all([
+    page.title(),
+    page.getByRole('button', { name: 'Login' }).isVisible(),
+  ]);
+  console.log(title, isVisible);
+}
+```
+
+## Void vs never vs undefined
+
+```ts
+// void — function returns nothing meaningful (side effects only)
+function logResult(msg: string): void {
+  console.log(msg);
+}
+
+// never — function never returns (throws or loops forever)
+function fail(message: string): never {
+  throw new Error(message);
+}
+
+// undefined — an explicit missing value
+function findUser(id: number): string | undefined {
+  if (id < 0) return undefined;
+  return `user-${id}`;
+}
+```
+
+## Try it: async patterns
+
+<TsPlayground
+  client:only="react"
+  label="Functions & Async — Playground"
+  height={360}
+  starter={`// Functions and async/await patterns
+
+// 1. Typed function
+function validateAge(age: number): boolean {
+  return age >= 18 && age <= 65;
+}
+console.log('18 valid:', validateAge(18));
+console.log('17 valid:', validateAge(17));
+console.log('66 valid:', validateAge(66));
+
+// 2. Arrow functions
+const processStatus = (s: string): string =>
+  s === 'pass' ? '✓ PASS' : s === 'fail' ? '✕ FAIL' : '○ SKIP';
+
+['pass', 'fail', 'skip'].forEach(s => console.log(processStatus(s)));
+
+// 3. Async/await (use IIFE since top-level await isn't supported here)
+(async () => {
+  async function simulateLogin(user: string): Promise<boolean> {
+    // simulate async work
+    await new Promise(r => setTimeout(r, 10));
+    return user === 'standard_user';
+  }
+
+  const ok = await simulateLogin('standard_user');
+  const fail = await simulateLogin('locked_user');
+  console.log('standard_user:', ok ? 'logged in' : 'failed');
+  console.log('locked_user:', fail ? 'logged in' : 'failed');
+})();
+`}
+/>
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="ts-functions-async" questions={[
+  {
+    q: "What is the difference between a regular function and an arrow function in TypeScript?",
+    a: "Syntax is the obvious difference. The key behavioural difference is `this` binding: arrow functions capture `this` from the enclosing lexical scope; regular functions have their own `this` binding. In Playwright page objects and fixtures, arrow functions are preferred for callbacks because they preserve the expected `this` context.",
+    senior: "The subtle difference is that arrow functions cannot be constructors and cannot be used with `new`. They also cannot be generators. For class methods that need to be called as callbacks (e.g. event handlers), arrow function class fields are safer than regular methods because `this` is lexically bound. However, arrow class fields are not on the prototype — relevant when you need to override methods in subclasses."
+  },
+  {
+    q: "What does async/await do under the hood?",
+    a: "async marks a function as returning a Promise. await pauses execution of the async function until the Promise resolves, then resumes with the resolved value. Under the hood it is syntactic sugar over .then() chains, using generator-like state machine compilation. The event loop is never blocked — other code runs while the Promise is pending.",
+    senior: "A common mistake: confusing 'async function does not block' with 'it runs concurrently'. Two sequential awaits in the same function run one-after-the-other. For true concurrency, use Promise.all(). In Playwright, this matters for performance: awaiting page.goto() and page.waitForResponse() sequentially vs concurrently with Promise.all() can make a measurable difference in test speed."
+  },
+  {
+    q: "What happens if you forget await before a Playwright action?",
+    a: "The action call returns a Promise that is not awaited. The next line executes immediately, before the action completes. For assertions, this means asserting against the state before the action took effect — producing intermittent failures. For actions like click(), the click may still happen, but subsequent code sees the pre-click state.",
+    senior: "This is one of the top sources of Playwright flakiness. Mitigation: enable the no-floating-promises ESLint rule to catch un-awaited Promises statically. TypeScript alone won't catch it — a Promise returned and discarded is valid TypeScript. The linter rule is the safety net."
+  },
+]} />
