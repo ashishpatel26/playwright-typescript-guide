@@ -2,8 +2,188 @@
 title: Actions
 level: 2
 order: 3
-description: Click, fill, select, hover, drag — Playwright's auto-waiting action APIs.
-status: draft
+description: Click, fill, select, hover, drag, keyboard — Playwright's auto-waiting action APIs and when each one is the right tool.
+duration: 35 min
+status: complete
+widgets: ['pw-runner', 'quiz']
+practiceSite:
+  name: DemoQA Forms
+  url: https://demoqa.com/automation-practice-form
 ---
 
-Coming soon.
+import CodeTabs from '../../../components/astro/CodeTabs.astro';
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import PwRunner from '../../../components/react/PwRunner';
+import QuizCard from '../../../components/react/QuizCard';
+
+## Auto-waiting
+
+Every Playwright action waits for the element to be actionable before
+acting. "Actionable" means: visible, stable (not animating), enabled, and
+not covered by another element.
+
+You never need `await page.waitForSelector()` before a click. Playwright
+retries until the element is ready or the timeout expires (default 30 s).
+
+## Click actions
+
+```ts
+// Basic click
+await page.getByRole('button', { name: 'Submit' }).click();
+
+// Double click
+await page.getByRole('listitem').first().dblclick();
+
+// Right click (opens context menu)
+await page.getByRole('img', { name: 'thumbnail' }).click({ button: 'right' });
+
+// Click with modifier key
+await page.getByText('Select All').click({ modifiers: ['Meta'] }); // Cmd+click on Mac
+
+// Click at specific coordinates within element
+await page.getByRole('canvas').click({ position: { x: 100, y: 50 } });
+
+// Force click — bypasses actionability checks (use sparingly)
+await page.getByRole('button').click({ force: true });
+```
+
+## Fill and type
+
+```ts
+// fill — clears the field then types (preferred for most inputs)
+await page.getByPlaceholder('Username').fill('standard_user');
+
+// type — types character by character, triggering key events (use for autocomplete inputs)
+await page.getByRole('combobox').type('London');
+
+// clear an input
+await page.getByLabel('Search').clear();
+
+// pressSequentially — like type, but with configurable delay between keys
+await page.getByRole('textbox').pressSequentially('hello', { delay: 50 });
+```
+
+<Tip>Use `fill()` for simple text inputs. Use `type()` or `pressSequentially()` only when the input has JavaScript listeners that react to individual keystrokes (autocomplete, masked inputs, real-time validation).</Tip>
+
+## Select dropdowns
+
+```ts
+// Select by visible text
+await page.getByRole('combobox', { name: 'Country' }).selectOption('United Kingdom');
+
+// Select by value attribute
+await page.getByRole('combobox').selectOption({ value: 'uk' });
+
+// Select multiple options (for multi-select)
+await page.getByRole('listbox').selectOption(['option1', 'option2']);
+```
+
+## Hover
+
+```ts
+// Hover to reveal a dropdown menu
+await page.getByRole('menuitem', { name: 'Account' }).hover();
+await page.getByRole('menuitem', { name: 'Settings' }).click();
+```
+
+## Keyboard
+
+```ts
+// Press a key (works on focused element)
+await page.getByRole('textbox').press('Enter');
+await page.getByRole('textbox').press('Tab');
+await page.getByRole('textbox').press('Escape');
+
+// Keyboard shortcuts
+await page.keyboard.press('Control+A');   // Select all
+await page.keyboard.press('Control+C');   // Copy
+await page.keyboard.press('Control+Z');   // Undo
+
+// Hold a key while performing actions
+await page.keyboard.down('Shift');
+await page.getByText('Item 3').click();
+await page.keyboard.up('Shift');
+```
+
+## Drag and drop
+
+```ts
+// dragTo — drag element to a target element
+await page.getByTestId('drag-source').dragTo(page.getByTestId('drop-target'));
+
+// Precise drag with coordinates
+await page.getByTestId('draggable').dragTo(page.getByTestId('droppable'), {
+  sourcePosition: { x: 10, y: 10 },
+  targetPosition: { x: 50, y: 50 },
+});
+```
+
+## Reference
+
+<CmdTable rows={[
+  { c: 'locator.click()', d: 'Left click (waits for actionable)' },
+  { c: 'locator.dblclick()', d: 'Double click' },
+  { c: 'locator.fill(value)', d: 'Clear + type into input' },
+  { c: 'locator.type(text)', d: 'Type character by character (key events)' },
+  { c: 'locator.press(key)', d: 'Press a keyboard key on the focused element' },
+  { c: 'locator.selectOption(value)', d: 'Select <option> in a <select>' },
+  { c: 'locator.hover()', d: 'Mouse hover' },
+  { c: 'locator.clear()', d: 'Clear input field' },
+  { c: 'locator.dragTo(target)', d: 'Drag and drop to target element' },
+  { c: 'locator.check()', d: 'Check a checkbox or radio button' },
+  { c: 'locator.uncheck()', d: 'Uncheck a checkbox' },
+  { c: 'locator.tap()', d: 'Tap (mobile / touch events)' },
+]} />
+
+## Try it: Actions simulation
+
+<PwRunner
+  client:only="react"
+  mockPage="login.html"
+  label="Actions — login flow simulation"
+  height={280}
+  starter={`import { test, expect } from '@playwright/test';
+
+test('login with fill + click', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('username').fill('standard_user');
+  await page.getByTestId('password').fill('secret_sauce');
+  await page.getByTestId('login-btn').click();
+  await expect(page.getByText('Inventory')).toBeVisible();
+});
+`}
+  steps={[
+    { description: 'Navigate to practice login page', action: 'navigate', value: 'login.html' },
+    { description: 'Fill username with standard_user', action: 'fill', selector: '[data-testid="username"]', value: 'standard_user' },
+    { description: 'Fill password with secret_sauce', action: 'fill', selector: '[data-testid="password"]', value: 'secret_sauce' },
+    { description: 'Click the login button', action: 'click', selector: '[data-testid="login-btn"]' },
+    { description: 'Expect inventory page visible', action: 'expect-visible', selector: '[data-page="inventory"]' },
+  ]}
+/>
+
+## Practice on DemoQA Forms
+
+1. Fill the full automation practice form using only `getByLabel` and `getByRole` locators.
+2. Select a date from the date picker using keyboard navigation (`press('ArrowRight')`).
+3. Upload a file using `setInputFiles()` on the file input.
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="pw-actions" questions={[
+  {
+    q: "What does Playwright mean by 'actionable' and why does it matter?",
+    a: "An element is actionable when it is: visible, stable (not mid-animation), enabled (not disabled attribute), and not covered by an overlay. Playwright retries until the element is actionable before executing any action. This means you almost never need explicit waits before actions — the auto-wait mechanism handles transient UI states.",
+    senior: "The actionability check is configurable. force: true bypasses it entirely — useful for elements that are intentionally covered (e.g., a custom styled checkbox where the real input is hidden behind a span). Use force sparingly: it bypasses checks that exist to catch real user-facing problems. A test that passes only with force: true may be testing a UI the user cannot actually interact with."
+  },
+  {
+    q: "When should you use fill() vs type() in Playwright?",
+    a: "fill() clears the field and sets the value atomically — it's fast and reliable for most inputs. type() fires key events for each character — use it for inputs with JavaScript listeners that respond to individual keystrokes, like autocomplete widgets, masked inputs, or rich text editors where fill() does not trigger the expected behaviour.",
+    senior: "A third option: page.keyboard.type() or locator.pressSequentially() with a delay. This is the most realistic keyboard simulation — it fires keydown/keypress/keyup for every character. Use it for inputs that validate on every keystroke. The trade-off: it's slower. Profile your test runtime before reaching for pressSequentially."
+  },
+  {
+    q: "How does dragTo() work and what are its limitations?",
+    a: "dragTo() moves the mouse to the source element, presses the mouse button, moves to the target element, and releases. It works for HTML5 drag-and-drop and most library implementations. Limitations: some drag-and-drop libraries (Sortable.js, React DnD) use pointer events, not drag events — dragTo() may not work. Use mouse.move() + mouse.down() + mouse.up() for fine-grained control.",
+    senior: "Drag-and-drop is one of the most implementation-dependent interactions to automate. Before writing the test, inspect the events the library fires. HTML5 dragstart/drag/drop events: dragTo() works. PointerEvent-based libraries: use page.mouse.move() with steps option for smooth movement. Some libraries have internal state machines that require specific event sequences — trace recording helps identify them."
+  },
+]} />
