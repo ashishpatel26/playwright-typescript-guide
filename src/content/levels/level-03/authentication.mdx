@@ -1,0 +1,187 @@
+---
+title: Authentication & Sessions
+level: 3
+order: 5
+description: storageState, setup projects, and multi-role auth — log in once, reuse everywhere, and keep your suite fast.
+duration: 35 min
+status: complete
+widgets: ['quiz']
+---
+
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import CodeTabs from '../../../components/astro/CodeTabs.astro';
+import QuizCard from '../../../components/react/QuizCard';
+
+## The problem with logging in per test
+
+A UI login takes 3–10 seconds. At 500 tests, that's up to 80 minutes of CI
+time spent on a flow you've already proven works. Worse: every test now
+depends on the login page, so one auth hiccup fails the entire suite.
+
+The fix: authenticate **once**, save the session, and have every test start
+already logged in.
+
+## storageState: the mechanism
+
+```ts
+// After logging in, capture cookies + localStorage to a file
+await page.context().storageState({ path: 'playwright/.auth/user.json' });
+
+// Any new context created with that file starts authenticated
+const context = await browser.newContext({
+  storageState: 'playwright/.auth/user.json',
+});
+```
+
+## The setup project pattern
+
+The official pattern: a `setup` project logs in first, all test projects
+depend on it and reuse the saved state.
+
+<CodeTabs labels={['auth.setup.ts', 'playwright.config.ts', 'inventory.spec.ts']}>
+  <Fragment slot="tab-0">
+
+```ts
+import { test as setup, expect } from '@playwright/test';
+
+const authFile = 'playwright/.auth/user.json';
+
+setup('authenticate', async ({ page }) => {
+  await page.goto('/');
+  await page.getByPlaceholder('Username').fill('standard_user');
+  await page.getByPlaceholder('Password').fill('secret_sauce');
+  await page.getByRole('button', { name: 'Login' }).click();
+
+  // Confirm login actually worked before saving state
+  await expect(page.getByText('Products')).toBeVisible();
+
+  await page.context().storageState({ path: authFile });
+});
+```
+
+  </Fragment>
+  <Fragment slot="tab-1">
+
+```ts
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  projects: [
+    { name: 'setup', testMatch: /.*\.setup\.ts/ },
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: 'playwright/.auth/user.json',
+      },
+      dependencies: ['setup'],
+    },
+  ],
+});
+```
+
+  </Fragment>
+  <Fragment slot="tab-2">
+
+```ts
+import { test, expect } from '@playwright/test';
+
+// No login code — the page fixture is already authenticated
+test('inventory loads for logged-in user', async ({ page }) => {
+  await page.goto('/inventory.html');
+  await expect(page.locator('.inventory_item')).toHaveCount(6);
+});
+```
+
+  </Fragment>
+</CodeTabs>
+
+<Tip>Add <code>playwright/.auth/</code> to <code>.gitignore</code>. Session files contain live credentials in cookie form — they must never reach the repository.</Tip>
+
+## Multiple roles
+
+```ts
+// auth.setup.ts — one setup test per role
+setup('authenticate as admin', async ({ page }) => {
+  // ...admin login...
+  await page.context().storageState({ path: 'playwright/.auth/admin.json' });
+});
+
+setup('authenticate as customer', async ({ page }) => {
+  // ...customer login...
+  await page.context().storageState({ path: 'playwright/.auth/customer.json' });
+});
+```
+
+```ts
+// Per-file role selection
+test.use({ storageState: 'playwright/.auth/admin.json' });
+
+test('admin can see the moderation queue', async ({ page }) => { /* ... */ });
+```
+
+```ts
+// Both roles in ONE test — two contexts
+test('customer order appears in admin panel', async ({ browser }) => {
+  const customer = await browser.newContext({ storageState: 'playwright/.auth/customer.json' });
+  const admin = await browser.newContext({ storageState: 'playwright/.auth/admin.json' });
+
+  const shopPage = await customer.newPage();
+  const adminPage = await admin.newPage();
+  // customer places order → admin sees it
+});
+```
+
+## API-based login: skip the UI entirely
+
+```ts
+setup('authenticate via API', async ({ request }) => {
+  // POST credentials straight to the auth endpoint
+  await request.post('/api/login', {
+    data: { username: 'standard_user', password: 'secret_sauce' },
+  });
+  // The request fixture carries cookies — save them
+  await request.storageState({ path: 'playwright/.auth/user.json' });
+});
+```
+
+Faster and more stable than UI login. Use it when the auth API is accessible;
+keep exactly one UI test that proves the login form itself works.
+
+## When sessions expire mid-suite
+
+Token TTL shorter than suite runtime causes late-suite auth failures. Options:
+re-run setup on a schedule, refresh tokens in a fixture, or extend TTL in the
+test environment. Detect it first: auth failures clustered at the end of long
+runs are the signature.
+
+## Reference
+
+<CmdTable rows={[
+  { c: 'context.storageState({ path })', d: 'Save cookies + localStorage' },
+  { c: 'browser.newContext({ storageState })', d: 'Start context authenticated' },
+  { c: 'test.use({ storageState })', d: 'Per-file session selection' },
+  { c: 'dependencies: [\'setup\']', d: 'Run auth project before tests' },
+  { c: 'request.storageState({ path })', d: 'Save session from API login' },
+]} />
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="pw-adv-auth" questions={[
+  {
+    q: "How do you avoid logging in through the UI in every test?",
+    a: "Authenticate once in a setup project, save the session with context.storageState({ path }), and configure test projects with that storageState plus dependencies: ['setup']. Every test then starts with a context that already has the auth cookies and localStorage — no login code in tests.",
+    senior: "The setup-project pattern also fixes a parallelism problem: with per-test login, N workers hammer the auth endpoint simultaneously, which trips rate limits and lockouts on real identity providers. One setup login serves all workers. For sharded CI, each shard runs its own setup — keep the setup test under a few seconds or it taxes every shard."
+  },
+  {
+    q: "How do you test a flow involving two user roles, like customer and admin?",
+    a: "Save one storageState file per role in setup. For whole files needing one role, test.use({ storageState: 'admin.json' }). For both roles interacting in a single test, create two browser contexts, each loaded with a different state file — two isolated, simultaneously-authenticated sessions.",
+    senior: "Role-state files introduce a hidden coupling: tests assume the role's permissions match what setup created. When a permissions migration changes what 'admin' means, state files mask it until token refresh. Mitigate by asserting a role-specific element right after context creation — a one-line canary that turns silent permission drift into a clear early failure."
+  },
+  {
+    q: "Why prefer API login over UI login for session setup, and what's the caveat?",
+    a: "API login (request.post to the auth endpoint, then request.storageState) is faster — no browser rendering, no form interaction — and immune to login-page UI changes. The caveat: the login UI itself now has zero coverage, so keep exactly one UI test that proves the form works end to end.",
+    senior: "API login gets complicated with SSO/OAuth flows where tokens come from a third-party IdP with redirects and PKCE. Options there: a test-only token endpoint in lower environments, IdP test APIs, or falling back to UI login just for the setup project. Never scrape tokens from production IdPs in CI — that path leads to security incidents."
+  },
+]} />
