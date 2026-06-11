@@ -1,0 +1,153 @@
+---
+title: "Transactions & Stored Procedures"
+level: 6
+order: 2
+description: "Use transactions for test isolation and understand stored procedures for complex validation."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Transactions for Test Isolation
+
+Wrap each test in a transaction and roll it back — database returns to original state without deleting anything:
+
+```ts
+import { Client } from 'pg';
+import { test, expect } from '@playwright/test';
+
+let db: Client;
+
+test.beforeAll(async () => {
+  db = new Client({ connectionString: process.env.DATABASE_URL });
+  await db.connect();
+});
+
+test.afterAll(async () => db.end());
+
+test.beforeEach(async () => {
+  await db.query('BEGIN');
+});
+
+test.afterEach(async () => {
+  await db.query('ROLLBACK');
+});
+
+test('insert then assert within transaction', async () => {
+  await db.query(
+    `INSERT INTO products (name, price) VALUES ($1, $2)`,
+    ['Test Widget', 9.99]
+  );
+  const res = await db.query(
+    `SELECT * FROM products WHERE name = 'Test Widget'`
+  );
+  expect(res.rows).toHaveLength(1);
+  // ROLLBACK in afterEach removes this row — no cleanup needed
+});
+```
+
+## ACID Properties
+
+| Property | Meaning | Test relevance |
+|---|---|---|
+| **A**tomicity | All or nothing | A failed mid-transaction leaves no partial data |
+| **C**onsistency | Constraints enforced | FK violations, NOT NULL violations caught on commit |
+| **I**solation | Transactions don't see each other's uncommitted data | Parallel test workers need separate connections |
+| **D**urability | Committed data survives crash | Verified by restart tests; not normally tested in unit/int tests |
+
+## CTEs (Common Table Expressions)
+
+CTEs make complex validation queries readable:
+
+```sql
+-- Find users who ordered but never paid
+WITH ordered_users AS (
+  SELECT DISTINCT user_id FROM orders WHERE status = 'completed'
+),
+paying_users AS (
+  SELECT DISTINCT user_id FROM payments WHERE status = 'success'
+)
+SELECT u.email
+FROM ordered_users o
+LEFT JOIN paying_users p ON o.user_id = p.user_id
+JOIN users u ON o.user_id = u.id
+WHERE p.user_id IS NULL;
+```
+
+```ts
+test('no completed orders without payment', async () => {
+  const { rows } = await db.query(`
+    WITH ordered AS (SELECT DISTINCT user_id FROM orders WHERE status = 'completed'),
+         paid    AS (SELECT DISTINCT user_id FROM payments WHERE status = 'success')
+    SELECT o.user_id FROM ordered o LEFT JOIN paid p USING(user_id) WHERE p.user_id IS NULL
+  `);
+  expect(rows).toHaveLength(0);
+});
+```
+
+## Window Functions
+
+Useful for asserting order or ranking:
+
+```sql
+-- Check order of events
+SELECT
+  id,
+  event_type,
+  created_at,
+  LAG(created_at) OVER (ORDER BY created_at) AS prev_event_at
+FROM audit_events
+WHERE entity_id = 42
+ORDER BY created_at;
+```
+
+## Stored Procedures
+
+Call stored procedures from tests to exercise complex business logic:
+
+```ts
+test('stored proc calculates discount correctly', async () => {
+  // Insert test data
+  await db.query(`INSERT INTO customers (id, tier) VALUES (999, 'gold')`);
+
+  // Call stored procedure
+  const { rows } = await db.query(
+    `SELECT calculate_discount($1, $2) AS discount`,
+    [999, 100.00]
+  );
+  expect(rows[0].discount).toBe(15.00);  // gold tier = 15%
+
+  // Cleanup (or use transaction pattern)
+  await db.query(`DELETE FROM customers WHERE id = 999`);
+});
+```
+
+## Testing Constraints
+
+Verify that database constraints work:
+
+```ts
+test('unique email constraint prevents duplicate users', async () => {
+  await db.query(`INSERT INTO users (email) VALUES ('dup@test.com')`);
+
+  await expect(
+    db.query(`INSERT INTO users (email) VALUES ('dup@test.com')`)
+  ).rejects.toThrow('duplicate key value violates unique constraint');
+});
+
+test('NOT NULL constraint on required fields', async () => {
+  await expect(
+    db.query(`INSERT INTO orders (user_id) VALUES (1)`)  // total is NOT NULL
+  ).rejects.toThrow('null value in column "total"');
+});
+```
+
+<QuizCard client:only="react" storageKey="db-advanced" questions={[
+  { q: "How does wrapping tests in a transaction improve test isolation?", a: "ROLLBACK in afterEach reverts all changes — inserts, updates, deletes. No cleanup code needed, and tests can't affect each other even if one fails mid-run." },
+  { q: "What does the 'I' in ACID mean for parallel test execution?", a: "Isolation: uncommitted changes in one transaction are invisible to other connections. Parallel test workers each need their own DB connection/transaction to stay isolated." },
+  { q: "What is a CTE and why is it useful in test validation queries?", a: "A Common Table Expression (`WITH name AS (...)`) names a subquery for reuse in the main query. Makes complex validation queries readable and maintainable instead of nesting subqueries." },
+  { q: "Why test database constraints explicitly?", a: "Constraints are business rules enforced at the DB layer. Testing them confirms the schema protects data integrity independently of application code — a second line of defence against bad data." }
+]} />

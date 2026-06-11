@@ -1,0 +1,166 @@
+---
+title: "SQL Fundamentals for Testers"
+level: 6
+order: 1
+description: "Write SQL queries to validate database state in automated tests — SELECT, JOIN, and WHERE."
+duration: "35 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Why Testers Need SQL
+
+UI and API tests verify presentation and contract. SQL queries verify **ground truth** — what's actually stored. Critical for:
+- Confirming a form submission persisted correctly
+- Verifying a delete didn't orphan child records
+- Asserting a background job ran and updated rows
+- Checking data migrations didn't corrupt records
+
+## SELECT Basics
+
+```sql
+-- All columns
+SELECT * FROM customers;
+
+-- Specific columns
+SELECT id, email, created_at FROM customers;
+
+-- Filter
+SELECT * FROM orders WHERE status = 'pending';
+
+-- Multiple conditions
+SELECT * FROM orders
+WHERE status = 'pending'
+  AND created_at > NOW() - INTERVAL '24 hours';
+
+-- Limit
+SELECT * FROM products ORDER BY created_at DESC LIMIT 10;
+```
+
+## WHERE Operators
+
+```sql
+-- Comparison
+WHERE price > 100
+WHERE quantity BETWEEN 1 AND 50
+WHERE status IN ('active', 'pending')
+WHERE email LIKE '%@example.com'
+WHERE deleted_at IS NULL
+
+-- Negation
+WHERE status NOT IN ('deleted', 'archived')
+WHERE name IS NOT NULL
+```
+
+## JOINs
+
+```sql
+-- INNER JOIN — only matching rows
+SELECT o.id, u.email, o.total
+FROM orders o
+INNER JOIN users u ON o.user_id = u.id;
+
+-- LEFT JOIN — all orders, even without a user
+SELECT o.id, u.email
+FROM orders o
+LEFT JOIN users u ON o.user_id = u.id;
+
+-- Multiple joins
+SELECT o.id, u.email, p.name AS product
+FROM orders o
+INNER JOIN users u ON o.user_id = u.id
+INNER JOIN order_items oi ON oi.order_id = o.id
+INNER JOIN products p ON oi.product_id = p.id;
+```
+
+## Aggregate Functions
+
+```sql
+-- Count
+SELECT COUNT(*) FROM orders WHERE status = 'completed';
+
+-- Sum, average
+SELECT SUM(total), AVG(total), MAX(total), MIN(total)
+FROM orders
+WHERE user_id = 42;
+
+-- GROUP BY
+SELECT status, COUNT(*) AS count
+FROM orders
+GROUP BY status;
+
+-- HAVING (filter after aggregation)
+SELECT user_id, COUNT(*) AS order_count
+FROM orders
+GROUP BY user_id
+HAVING COUNT(*) > 5;
+```
+
+## Using SQL in Playwright Tests
+
+With `pg` (PostgreSQL client):
+
+```ts
+import { Client } from 'pg';
+import { test, expect } from '@playwright/test';
+
+let db: Client;
+
+test.beforeAll(async () => {
+  db = new Client({ connectionString: process.env.DATABASE_URL });
+  await db.connect();
+});
+
+test.afterAll(async () => {
+  await db.end();
+});
+
+test('registration creates user record', async ({ page }) => {
+  await page.goto('/register');
+  await page.fill('[name=email]', 'newuser@test.com');
+  await page.fill('[name=password]', 'SecurePass123!');
+  await page.click('[type=submit]');
+  await expect(page.getByText('Welcome')).toBeVisible();
+
+  const res = await db.query(
+    `SELECT id, email, created_at FROM users WHERE email = $1`,
+    ['newuser@test.com']
+  );
+  expect(res.rows).toHaveLength(1);
+  expect(res.rows[0].email).toBe('newuser@test.com');
+});
+```
+
+## Common Tester Queries
+
+```sql
+-- Check record exists
+SELECT COUNT(*) FROM users WHERE email = 'test@example.com';
+-- Assert: count = 1
+
+-- Check record was deleted
+SELECT COUNT(*) FROM orders WHERE id = 123;
+-- Assert: count = 0
+
+-- Verify FK relationship intact
+SELECT o.id FROM orders o
+LEFT JOIN users u ON o.user_id = u.id
+WHERE u.id IS NULL;
+-- Assert: 0 rows (no orphaned orders)
+
+-- Check latest record
+SELECT * FROM audit_log
+WHERE entity_id = 42
+ORDER BY created_at DESC
+LIMIT 1;
+```
+
+<QuizCard client:only="react" storageKey="db-sql" questions={[
+  { q: "What is the difference between WHERE and HAVING?", a: "WHERE filters rows before aggregation. HAVING filters groups after GROUP BY. You can't use aggregate functions (COUNT, SUM) in WHERE — use HAVING for that." },
+  { q: "When would you use a LEFT JOIN over an INNER JOIN in a test query?", a: "LEFT JOIN when you want to find rows with NO match — e.g., orphaned records. `WHERE right_table.id IS NULL` after a LEFT JOIN returns records that have no related row." },
+  { q: "Why use parameterised queries (`$1`) rather than string interpolation in test SQL?", a: "Prevents SQL injection — even in tests where the data comes from fixtures. Also handles type coercion correctly (dates, nulls, special characters)." },
+  { q: "A form submission test passes but a SQL check finds 0 rows. What does this indicate?", a: "The UI showed success but the database write failed or was rolled back. This is exactly why database assertions complement UI tests — the UI can lie, the DB cannot." }
+]} />

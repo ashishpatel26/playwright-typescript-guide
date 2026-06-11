@@ -1,0 +1,167 @@
+---
+title: "NoSQL Validation"
+level: 6
+order: 4
+description: "Validate MongoDB, Redis, and other NoSQL databases in automated test suites."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## NoSQL Landscape for Testers
+
+| Database | Type | Node driver | Test use |
+|---|---|---|---|
+| MongoDB | Document | `mongodb` | Validate document shape, queries |
+| Redis | Key-value / cache | `ioredis` | Verify cache entries, TTL, pub/sub |
+| Cassandra | Wide column | `cassandra-driver` | Validate partition queries |
+| DynamoDB | Key-value / document | `@aws-sdk/client-dynamodb` | Validate items, GSI queries |
+
+## MongoDB Validation
+
+```ts
+// Install: npm install mongodb
+import { MongoClient } from 'mongodb';
+import { test, expect } from '@playwright/test';
+
+let client: MongoClient;
+
+test.beforeAll(async () => {
+  client = new MongoClient(process.env.MONGO_URL!);
+  await client.connect();
+});
+
+test.afterAll(async () => client.close());
+
+test('user document has required fields', async ({ page }) => {
+  await page.goto('/register');
+  await page.fill('[name=email]', 'mongo@test.com');
+  await page.fill('[name=password]', 'Pass123!');
+  await page.click('[type=submit]');
+  await expect(page.getByText('Welcome')).toBeVisible();
+
+  const db = client.db('myapp');
+  const user = await db.collection('users').findOne({ email: 'mongo@test.com' });
+  expect(user).not.toBeNull();
+  expect(user!.email).toBe('mongo@test.com');
+  expect(user!.createdAt).toBeInstanceOf(Date);
+  expect(user!.passwordHash).toBeDefined();
+  expect(user!.password).toBeUndefined();  // raw password must NOT be stored
+});
+```
+
+## MongoDB Query Operators
+
+```ts
+// Find users created in last hour
+const recent = await db.collection('users').find({
+  createdAt: { $gte: new Date(Date.now() - 3600000) },
+}).toArray();
+
+// Count documents matching condition
+const count = await db.collection('orders').countDocuments({
+  status: { $in: ['pending', 'processing'] },
+  total: { $gt: 100 },
+});
+
+// Assert nested field
+const order = await db.collection('orders').findOne({ _id: orderId });
+expect(order!.shipping.address.city).toBe('London');
+```
+
+## Redis Validation
+
+```ts
+// Install: npm install ioredis
+import Redis from 'ioredis';
+import { test, expect } from '@playwright/test';
+
+let redis: Redis;
+
+test.beforeAll(async () => {
+  redis = new Redis(process.env.REDIS_URL!);
+});
+
+test.afterAll(async () => redis.quit());
+
+test('login sets session token in Redis', async ({ page }) => {
+  await page.goto('/login');
+  await page.fill('[name=username]', 'admin');
+  await page.fill('[name=password]', 'admin123');
+  await page.click('[type=submit]');
+
+  const cookies = await page.context().cookies();
+  const sessionId = cookies.find((c) => c.name === 'session')?.value;
+  expect(sessionId).toBeDefined();
+
+  const sessionData = await redis.get(`session:${sessionId}`);
+  expect(sessionData).not.toBeNull();
+  const session = JSON.parse(sessionData!);
+  expect(session.userId).toBeDefined();
+});
+
+test('cache key has reasonable TTL', async () => {
+  const ttl = await redis.ttl('product:catalog:featured');
+  expect(ttl).toBeGreaterThan(0);     // key exists
+  expect(ttl).toBeLessThan(3600);     // max 1 hour cache
+});
+```
+
+## Redis Data Structures in Tests
+
+```ts
+// List (e.g., job queue)
+const queueLength = await redis.llen('email:queue');
+expect(queueLength).toBeGreaterThan(0);
+
+// Hash (e.g., user session)
+const fields = await redis.hgetall(`user:${userId}:profile`);
+expect(fields.email).toBeDefined();
+
+// Set (e.g., unique visitors)
+const isMember = await redis.sismember('active:users', String(userId));
+expect(isMember).toBe(1);
+
+// Sorted set (e.g., leaderboard)
+const rank = await redis.zrank('leaderboard', String(userId));
+expect(rank).not.toBeNull();
+```
+
+## DynamoDB (AWS)
+
+```ts
+import { DynamoDBClient, GetItemCommand } from '@aws-sdk/client-dynamodb';
+
+const dynamo = new DynamoDBClient({ region: 'us-east-1' });
+
+test('item exists in DynamoDB after creation', async ({ request }) => {
+  const res = await request.post('/items', { data: { id: 'test-123', name: 'Widget' } });
+  expect(res.status()).toBe(201);
+
+  const { Item } = await dynamo.send(new GetItemCommand({
+    TableName: process.env.DYNAMO_TABLE!,
+    Key: { id: { S: 'test-123' } },
+  }));
+  expect(Item).toBeDefined();
+  expect(Item!.name.S).toBe('Widget');
+});
+```
+
+## NoSQL vs SQL Testing Patterns
+
+| Aspect | SQL | NoSQL |
+|---|---|---|
+| Schema validation | CHECK constraints, column types | Manual field assertion in test |
+| Relationships | Foreign key queries | Embed or look up by ID |
+| Cleanup | `DELETE WHERE` or ROLLBACK | `deleteOne`, `del`, `remove` |
+| Partial update check | `UPDATE ... SET col=val` effect | Compare before/after document |
+
+<QuizCard client:only="react" storageKey="db-nosql" questions={[
+  { q: "How do you assert that a raw password is NOT stored in MongoDB?", a: "Find the document, then `expect(doc.password).toBeUndefined()`. Also assert `doc.passwordHash` is defined — confirms the app hashed and stored the hash, not plaintext." },
+  { q: "What does `redis.ttl('key')` return and why test it?", a: "Remaining time-to-live in seconds. `-1` = no expiry, `-2` = key doesn't exist. Test TTL to ensure cache keys expire (memory leak prevention) and within expected bounds (stale data prevention)." },
+  { q: "How do you check a MongoDB nested field like `order.shipping.address.city`?", a: "Two options: (1) use dot notation in the query filter: `{ 'shipping.address.city': 'London' }`, or (2) retrieve the document and traverse: `order!.shipping.address.city`." },
+  { q: "DynamoDB doesn't support transactions. How do you isolate test data?", a: "Use unique, test-specific key prefixes (e.g., `test-${testId}-item`). Clean up in afterEach with `DeleteItemCommand`. Or use a separate test table reset between test runs." }
+]} />

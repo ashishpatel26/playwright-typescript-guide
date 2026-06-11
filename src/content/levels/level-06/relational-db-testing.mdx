@@ -1,0 +1,176 @@
+---
+title: "Relational DB Validation"
+level: 6
+order: 3
+description: "Validate PostgreSQL and MySQL databases in Playwright tests using real queries."
+duration: "35 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## PostgreSQL with `pg`
+
+```ts
+// Install: npm install pg @types/pg
+import { Client } from 'pg';
+
+const db = new Client({
+  connectionString: process.env.DATABASE_URL,
+  // OR explicit options:
+  host: 'localhost',
+  port: 5432,
+  database: 'pagila',
+  user: 'postgres',
+  password: process.env.DB_PASSWORD,
+});
+await db.connect();
+
+// Query with parameterised values
+const { rows } = await db.query(
+  `SELECT film_id, title, rental_rate FROM film WHERE rating = $1 LIMIT 5`,
+  ['PG']
+);
+```
+
+## MySQL with `mysql2`
+
+```ts
+// Install: npm install mysql2
+import mysql from 'mysql2/promise';
+
+const conn = await mysql.createConnection({
+  host: 'localhost',
+  port: 3306,
+  database: 'sakila',
+  user: 'root',
+  password: process.env.DB_PASSWORD,
+});
+
+const [rows] = await conn.execute(
+  `SELECT film_id, title FROM film WHERE rating = ? LIMIT 5`,
+  ['PG']
+);
+```
+
+## Fixture Pattern for DB Connection
+
+Centralise the connection in a Playwright fixture:
+
+```ts
+// fixtures/db.ts
+import { test as base } from '@playwright/test';
+import { Client } from 'pg';
+
+type DbFixture = { db: Client };
+
+export const test = base.extend<DbFixture>({
+  db: async ({}, use) => {
+    const client = new Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
+    await client.query('BEGIN');
+    await use(client);
+    await client.query('ROLLBACK');
+    await client.end();
+  },
+});
+```
+
+```ts
+// tests/inventory.spec.ts
+import { test } from '../fixtures/db';
+import { expect } from '@playwright/test';
+
+test('pagila has G-rated films', async ({ db }) => {
+  const { rows } = await db.query(
+    `SELECT COUNT(*) AS cnt FROM film WHERE rating = 'G'`
+  );
+  expect(Number(rows[0].cnt)).toBeGreaterThan(100);
+});
+```
+
+## Pagila (PostgreSQL) — Practice Dataset
+
+Pagila is a DVD rental schema with rich relationships:
+
+```sql
+-- Top 5 rented films
+SELECT f.title, COUNT(r.rental_id) AS rentals
+FROM rental r
+JOIN inventory i ON r.inventory_id = i.inventory_id
+JOIN film f ON i.film_id = f.film_id
+GROUP BY f.film_id, f.title
+ORDER BY rentals DESC
+LIMIT 5;
+
+-- Active customers in last 30 days
+SELECT COUNT(DISTINCT customer_id) AS active
+FROM rental
+WHERE rental_date > NOW() - INTERVAL '30 days';
+```
+
+## Sakila (MySQL) — Practice Dataset
+
+MySQL equivalent of Pagila:
+
+```sql
+-- Films by category
+SELECT c.name AS category, COUNT(f.film_id) AS count
+FROM film f
+JOIN film_category fc ON f.film_id = fc.film_id
+JOIN category c ON fc.category_id = c.category_id
+GROUP BY c.name
+ORDER BY count DESC;
+```
+
+## Data Integrity Checks
+
+```ts
+test('no orphaned inventory rows', async ({ db }) => {
+  const { rows } = await db.query(`
+    SELECT i.inventory_id
+    FROM inventory i
+    LEFT JOIN film f ON i.film_id = f.film_id
+    WHERE f.film_id IS NULL
+  `);
+  expect(rows).toHaveLength(0);
+});
+
+test('all rentals have a customer', async ({ db }) => {
+  const { rows } = await db.query(`
+    SELECT r.rental_id
+    FROM rental r
+    LEFT JOIN customer c ON r.customer_id = c.customer_id
+    WHERE c.customer_id IS NULL
+  `);
+  expect(rows).toHaveLength(0);
+});
+
+test('rental return date after checkout date', async ({ db }) => {
+  const { rows } = await db.query(`
+    SELECT rental_id FROM rental
+    WHERE return_date IS NOT NULL
+      AND return_date < rental_date
+  `);
+  expect(rows).toHaveLength(0);
+});
+```
+
+## PostgreSQL vs MySQL Differences
+
+| | PostgreSQL | MySQL |
+|---|---|---|
+| Node driver | `pg` | `mysql2` |
+| Param placeholder | `$1, $2` | `?` |
+| Case sensitivity | Case-sensitive by default | Case-insensitive by default |
+| RETURNING clause | ✅ `INSERT ... RETURNING id` | ❌ use `connection.insertId` |
+| JSON support | `jsonb` (indexed) | `JSON` column |
+
+<QuizCard client:only="react" storageKey="db-relational" questions={[
+  { q: "What is the key syntactic difference between PostgreSQL and MySQL parameterised queries?", a: "PostgreSQL uses numbered placeholders (`$1, $2`). MySQL uses positional `?` markers. Both prevent SQL injection." },
+  { q: "How does the `db` fixture pattern with BEGIN/ROLLBACK improve test reliability?", a: "Each test gets a clean DB state via ROLLBACK — inserts from one test don't affect others. No manual cleanup code needed, and failures don't leave dirty data." },
+  { q: "What does an orphaned-record query look like and when do you write one?", a: "LEFT JOIN the child table to the parent, then filter WHERE parent.id IS NULL. Write one after any delete operation that should cascade, or after a data migration." },
+  { q: "You need the ID of a newly inserted row in PostgreSQL. How?", a: "Use `RETURNING`: `INSERT INTO orders (...) VALUES (...) RETURNING id`. MySQL equivalent: read `result.insertId` from the query result object." }
+]} />
