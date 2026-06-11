@@ -1,0 +1,150 @@
+---
+title: Screenplay & Fluent Patterns
+level: 4
+order: 3
+description: Beyond POM — the Screenplay pattern's actors, tasks, and questions, plus fluent chaining. When each pattern earns its complexity.
+duration: 35 min
+status: complete
+widgets: ['quiz']
+---
+
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import QuizCard from '../../../components/react/QuizCard';
+
+## Screenplay: the cast
+
+Screenplay reorganises automation around **actors** who perform **tasks**
+composed of **interactions**, and ask **questions** about state.
+
+```
+Actor      — who: a user with abilities (browse the web, call APIs)
+Ability    — what they can use: BrowseTheWeb(page), CallAnApi(request)
+Task       — business action: Login.withCredentials(user, pass)
+Interaction — atomic step: Click.on(loginButton), Enter.text(...)
+Question   — state query: TheCartTotal.value(), IsVisible.of(banner)
+```
+
+```ts
+// Screenplay-style test — reads as a narrative
+const james = Actor.named('James').whoCan(BrowseTheWeb.using(page));
+
+await james.attemptsTo(
+  Login.withCredentials('standard_user', 'secret_sauce'),
+  AddToCart.theProduct('Sauce Labs Backpack'),
+);
+
+await james.asks(TheCartCount.value()).then(count => expect(count).toBe(1));
+```
+
+```ts
+// A Task composes Interactions — and other Tasks
+export const Login = {
+  withCredentials: (user: string, pass: string): Task => ({
+    async performAs(actor: Actor): Promise<void> {
+      const page = BrowseTheWeb.as(actor).page;
+      await page.getByPlaceholder('Username').fill(user);
+      await page.getByPlaceholder('Password').fill(pass);
+      await page.getByRole('button', { name: 'Login' }).click();
+    },
+  }),
+};
+```
+
+## What Screenplay buys you
+
+- **Multi-actor scenarios are first-class.** Two actors with different
+  abilities (one browses, one calls APIs) model real workflows naturally.
+- **Tasks compose.** `CompletePurchase` = `Login` + `AddToCart` + `Checkout`
+  — reuse without inheritance.
+- **Single Responsibility everywhere.** Each task is one small class/object;
+  no god page objects.
+
+## What it costs
+
+- Indirection: five concepts before the first test runs.
+- Team onboarding: every new hire learns the pattern, not just Playwright.
+- Ecosystem mismatch: Playwright's fixtures, auto-wait, and locators already
+  solve many problems Screenplay was invented for (in Selenium-era Java).
+
+<Tip>Honest guidance: most Playwright teams should run well-factored POM with fixtures and flow functions. Reach for Screenplay when you have multi-actor workflows, BDD reporting requirements, or an organisation already fluent in it (Serenity/JS shops).</Tip>
+
+## Fluent pattern: chainable APIs
+
+Fluent design makes each method return an object to continue from — `this`
+for same-page actions, the next page object for navigation:
+
+```ts
+export class CheckoutPage {
+  async fillFirstName(name: string): Promise<this> {
+    await this.firstNameInput.fill(name);
+    return this;
+  }
+
+  async fillLastName(name: string): Promise<this> {
+    await this.lastNameInput.fill(name);
+    return this;
+  }
+
+  async fillPostcode(code: string): Promise<this> {
+    await this.postcodeInput.fill(code);
+    return this;
+  }
+
+  async continueToOverview(): Promise<OverviewPage> {
+    await this.continueButton.click();
+    return new OverviewPage(this.page);
+  }
+}
+```
+
+```ts
+// Await once at the end of each chain segment
+const overview = await (await (await checkout
+  .fillFirstName('Ada'))
+  .fillLastName('Lovelace'))
+  .continueToOverview();
+```
+
+The nested awaits are the honest downside of async fluent chains in
+TypeScript. Two cleaner alternatives:
+
+```ts
+// Alternative 1: a single method taking a data object (usually best)
+await checkout.fillShippingInfo({ firstName: 'Ada', lastName: 'Lovelace', postcode: 'SW1' });
+
+// Alternative 2: collect steps, execute once
+await checkout
+  .with({ firstName: 'Ada', lastName: 'Lovelace' })
+  .submit();
+```
+
+## Pattern selection
+
+<CmdTable rows={[
+  { c: 'Well-factored POM + fixtures', d: 'Default for Playwright teams — lowest concept count' },
+  { c: 'Flow functions over POM', d: 'Multi-page journeys (purchaseFlow) — add when journeys repeat' },
+  { c: 'Component objects', d: 'Shared UI (header, grid, modal) — add when pages share parts' },
+  { c: 'Fluent chaining', d: 'Long form-filling sequences — prefer data-object methods first' },
+  { c: 'Screenplay', d: 'Multi-actor workflows, BDD orgs, Serenity/JS ecosystems' },
+]} />
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="fw-screenplay" questions={[
+  {
+    q: "Explain the Screenplay pattern's core concepts.",
+    a: "Actors perform Tasks and ask Questions. Actors have Abilities (BrowseTheWeb, CallAnApi) that grant access to tools. Tasks compose Interactions (atomic steps like Click, Enter) and other Tasks into business actions. Questions read state for assertions. Tests become narratives: actor.attemptsTo(Login.withCredentials(...)).",
+    senior: "Screenplay is SOLID applied to test design — each Task is a single-responsibility unit, composition replaces inheritance, and abilities are injected dependencies. The honest assessment: it predates Playwright's fixture system, which delivers much of the same decoupling with native tooling. I'd adopt it for multi-actor domains (marketplaces, approval chains) and skip it elsewhere."
+  },
+  {
+    q: "When would you choose Screenplay over POM, and vice versa?",
+    a: "Screenplay: multi-actor scenarios, heavy task reuse across journeys, BDD-style living documentation, or teams already invested in Serenity/JS. POM: everything else — it has fewer concepts, maps directly to Playwright's API, and new team members are productive in days instead of weeks.",
+    senior: "The decision is organisational more than technical. Screenplay's per-task granularity shines in large orgs where dozens of engineers share a framework and need enforced boundaries. In a 5-person team it's ceremony. I ask: who maintains this in two years, and what's the cheapest pattern they can operate correctly? Usually that answer is POM plus flow functions."
+  },
+  {
+    q: "What's the drawback of fluent (chainable) page object methods in async TypeScript?",
+    a: "Every method returns a Promise, so chains need an await per link — await (await (await x.a()).b()).c() — which destroys the readability the pattern promises. Workarounds: methods that take a data object (fillShippingInfo({...})), or a builder that collects steps and executes them in one awaited call.",
+    senior: "This is a case where a pattern that's elegant in synchronous Java becomes awkward in async TypeScript — a good probe of whether a candidate adapts patterns to the language or cargo-cults them. The data-object method is also more refactor-stable: adding a field changes one interface, not a chain signature used in fifty tests."
+  },
+]} />
