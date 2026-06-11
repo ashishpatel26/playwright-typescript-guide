@@ -1,0 +1,185 @@
+---
+title: Network Interception & Mocking
+level: 3
+order: 4
+description: route(), fulfill, abort, modify — plus HAR recording. Control every network request your app makes and test states the backend can't give you.
+duration: 40 min
+status: complete
+widgets: ['quiz']
+---
+
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import CodeTabs from '../../../components/astro/CodeTabs.astro';
+import QuizCard from '../../../components/react/QuizCard';
+
+## Why intercept the network
+
+Some states are nearly impossible to produce through the real backend: empty
+result sets, 500 errors, slow responses, feature flags, third-party outages.
+`page.route()` lets the test own the network layer and manufacture exactly
+the state it needs.
+
+## route(): the three verbs
+
+```ts
+await page.route('**/api/products', async route => {
+  // 1. fulfill — answer with a mock, request never reaches the server
+  await route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify([{ id: 1, name: 'Mock Widget', price: 9.99 }]),
+  });
+});
+
+await page.route('**/analytics/**', route => {
+  // 2. abort — block the request entirely (kill trackers, ads)
+  return route.abort();
+});
+
+await page.route('**/api/user', async route => {
+  // 3. continue — let it through, optionally modified
+  await route.continue({
+    headers: { ...route.request().headers(), 'x-test-run': 'true' },
+  });
+});
+```
+
+## Mocking states the backend can't give you
+
+<CodeTabs labels={['empty-state.spec.ts', 'error-state.spec.ts', 'slow-network.spec.ts']}>
+  <Fragment slot="tab-0">
+
+```ts
+import { test, expect } from '@playwright/test';
+
+test('empty cart shows call-to-action', async ({ page }) => {
+  await page.route('**/api/cart', route =>
+    route.fulfill({ status: 200, json: { items: [], total: 0 } })
+  );
+
+  await page.goto('/cart');
+  await expect(page.getByText('Your cart is empty')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Start shopping' })).toBeVisible();
+});
+```
+
+  </Fragment>
+  <Fragment slot="tab-1">
+
+```ts
+import { test, expect } from '@playwright/test';
+
+test('API failure shows recoverable error', async ({ page }) => {
+  await page.route('**/api/orders', route =>
+    route.fulfill({ status: 500, json: { error: 'Internal Server Error' } })
+  );
+
+  await page.goto('/orders');
+  await expect(page.getByText('Something went wrong')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+});
+```
+
+  </Fragment>
+  <Fragment slot="tab-2">
+
+```ts
+import { test, expect } from '@playwright/test';
+
+test('slow search shows loading state', async ({ page }) => {
+  await page.route('**/api/search**', async route => {
+    await new Promise(r => setTimeout(r, 2000));   // inject latency
+    await route.continue();
+  });
+
+  await page.goto('/');
+  await page.getByPlaceholder('Search').fill('widgets');
+  await expect(page.getByTestId('search-spinner')).toBeVisible();
+});
+```
+
+  </Fragment>
+</CodeTabs>
+
+<Tip>
+`route.fulfill({ json: obj })` is shorthand for status 200 + JSON content type + stringified body. Use it for compact mocks.
+</Tip>
+
+## Modify a real response
+
+```ts
+await page.route('**/api/products', async route => {
+  const response = await route.fetch();         // real request goes out
+  const data = await response.json();
+  data.products[0].stock = 0;                   // surgically alter one field
+  await route.fulfill({ response, json: data }); // serve modified version
+});
+```
+
+This pattern — fetch real, mutate, fulfill — keeps mocks honest: everything
+stays real except the one field under test.
+
+## HAR recording and replay
+
+```ts
+// Record: run against the real backend once, save all traffic
+const context = await browser.newContext({
+  recordHar: { path: 'fixtures/checkout.har', urlFilter: '**/api/**' },
+});
+
+// Replay: serve every API call from the HAR file — no backend needed
+await page.routeFromHAR('fixtures/checkout.har', {
+  url: '**/api/**',
+  update: false,   // true = re-record instead of replay
+});
+```
+
+HAR replay turns an integration suite into a hermetic one: deterministic,
+fast, runnable offline. Re-record (`update: true`) when the API contract
+changes.
+
+## Scope and ordering
+
+```ts
+// Context-level route — applies to every page in the context
+await context.route('**/ads/**', route => route.abort());
+
+// Page-level routes are checked before context-level ones.
+// Last registered route matching the URL wins — register general
+// handlers first, specific overrides after.
+await page.unroute('**/api/cart');  // remove a handler
+```
+
+## Reference
+
+<CmdTable rows={[
+  { c: 'page.route(pattern, handler)', d: 'Intercept matching requests on this page' },
+  { c: 'route.fulfill({ status, json })', d: 'Respond with a mock' },
+  { c: 'route.abort()', d: 'Block the request' },
+  { c: 'route.continue({ headers })', d: 'Pass through, optionally modified' },
+  { c: 'route.fetch()', d: 'Execute the real request (for modify pattern)' },
+  { c: 'page.routeFromHAR(path, opts)', d: 'Replay recorded traffic' },
+  { c: 'context.route(pattern, handler)', d: 'Intercept for all pages in context' },
+  { c: 'page.unroute(pattern)', d: 'Remove a route handler' },
+]} />
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="pw-adv-network" questions={[
+  {
+    q: "What can route() do with an intercepted request?",
+    a: "Three things: fulfill (respond with a mock — the request never reaches the server), abort (block it, e.g. analytics or ads), continue (let it through, optionally modifying headers, method, or post data). A fourth pattern combines them: route.fetch() executes the real request, you mutate the response, then fulfill with the modified version.",
+    senior: "The fetch-mutate-fulfill pattern is the most underused: it tests one specific state (out-of-stock, negative balance) while everything else stays real, so the mock can't drift from the actual contract. Full-response mocks rot silently when the API changes; surgical mutations rot loudly because route.fetch() still hits the real endpoint."
+  },
+  {
+    q: "When would you mock an API in an E2E test rather than use the real backend?",
+    a: "For states the backend can't reliably produce: error responses (500s, timeouts), empty datasets, race conditions, slow networks, third-party outages, feature-flag variants. Also for hermetic CI runs where the backend isn't available. Core happy paths should still run against the real stack — mocking everything tests your mocks, not your product.",
+    senior: "The strategic split: a small suite of unmocked journey tests proving real integration, plus a larger mocked suite covering UI states and edge cases. The mocked suite is fast and deterministic; the unmocked suite catches contract drift. Teams that mock 100% get green CI and broken production — the mocks pass while the real API changed shape."
+  },
+  {
+    q: "What is HAR replay and what problem does it solve?",
+    a: "Record real network traffic into a HAR file once (recordHar context option), then routeFromHAR serves all matching requests from the file — no backend needed. It makes tests deterministic, fast, and runnable offline, while keeping responses realistic because they came from the real API.",
+    senior: "HAR replay sits between hand-written mocks and live backends: more realistic than mocks, more stable than live. Its weakness is staleness — the HAR captures one moment of the API. Operationalise re-recording: a scheduled CI job with update: true against staging, and the diff in the HAR file becomes a free API-change detector in code review."
+  },
+]} />
