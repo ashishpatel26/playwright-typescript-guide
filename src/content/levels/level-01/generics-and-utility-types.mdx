@@ -1,0 +1,213 @@
+---
+title: Generics & Utility Types
+level: 1
+order: 4
+description: Generic functions and TypeScript's built-in utility types — Partial, Required, Pick, Record, Readonly — used throughout Playwright fixtures and test data builders.
+duration: 25 min
+status: complete
+widgets: ['ts-playground', 'quiz']
+---
+
+import TsPlayground from '../../../components/react/TsPlayground';
+import QuizCard from '../../../components/react/QuizCard';
+
+## Generics
+
+Generics let you write functions and types that work with many types while
+preserving type information:
+
+```ts
+// Without generics — loses type information
+function first(arr: any[]): any {
+  return arr[0];
+}
+
+// With generics — preserves type
+function first<T>(arr: T[]): T | undefined {
+  return arr[0];
+}
+
+const names = ['Alice', 'Bob', 'Carol'];
+const name = first(names); // inferred: string | undefined
+
+const counts = [3, 1, 4, 1, 5];
+const count = first(counts); // inferred: number | undefined
+```
+
+## Generic constraints
+
+```ts
+// T must have a name property
+function printName<T extends { name: string }>(item: T): void {
+  console.log(item.name);
+}
+
+// T must be a key of the object
+function getProperty<T, K extends keyof T>(obj: T, key: K): T[K] {
+  return obj[key];
+}
+
+const user = { id: 1, username: 'alice', email: 'alice@test.com' };
+const username = getProperty(user, 'username'); // string
+const id = getProperty(user, 'id');             // number
+// getProperty(user, 'missing');                 // Error at compile time
+```
+
+## Utility types
+
+TypeScript ships with utility types that transform existing types. These
+appear throughout Playwright fixture and configuration types.
+
+### Partial — make all properties optional
+
+```ts
+interface LoginCredentials {
+  username: string;
+  password: string;
+  twoFactorCode: string;
+}
+
+// For test data builders — not all fields required at construction time
+type PartialCredentials = Partial<LoginCredentials>;
+// { username?: string; password?: string; twoFactorCode?: string }
+
+function buildCredentials(overrides: Partial<LoginCredentials> = {}): LoginCredentials {
+  return {
+    username: 'standard_user',
+    password: 'secret_sauce',
+    twoFactorCode: '000000',
+    ...overrides,
+  };
+}
+```
+
+### Required — make all properties required
+
+```ts
+interface TestConfig {
+  baseURL?: string;
+  timeout?: number;
+}
+
+type RequiredConfig = Required<TestConfig>;
+// { baseURL: string; timeout: number }
+```
+
+### Pick — select specific properties
+
+```ts
+interface User {
+  id: number;
+  username: string;
+  email: string;
+  role: string;
+  createdAt: Date;
+}
+
+// Only need these fields for login tests
+type LoginUser = Pick<User, 'username' | 'email'>;
+// { username: string; email: string }
+```
+
+### Record — typed key-value map
+
+```ts
+// Map browser names to their expected headings
+type BrowserName = 'chromium' | 'firefox' | 'webkit';
+const browserVersions: Record<BrowserName, string> = {
+  chromium: '120.0',
+  firefox: '121.0',
+  webkit: '17.4',
+};
+
+// Test data indexed by test ID
+const testData: Record<string, { username: string; expected: string }> = {
+  'test-001': { username: 'standard_user', expected: 'Products' },
+  'test-002': { username: 'locked_out_user', expected: 'Epic sadface' },
+};
+```
+
+### Readonly — prevent mutation
+
+```ts
+// Playwright's Page is effectively readonly — you don't replace it
+const config: Readonly<{ baseURL: string; timeout: number }> = {
+  baseURL: 'https://saucedemo.com',
+  timeout: 30_000,
+};
+// config.timeout = 5_000; // Error: Cannot assign to readonly property
+```
+
+## Try it: generics and utility types
+
+<TsPlayground
+  client:only="react"
+  label="Generics & Utility Types — Playground"
+  height={380}
+  starter={`// Generics and utility types in action
+
+// Generic helper
+function first<T>(arr: T[]): T | undefined {
+  return arr[0];
+}
+
+const statuses = ['pass', 'fail', 'skip'] as const;
+const numbers = [42, 7, 13];
+console.log('First status:', first(statuses));
+console.log('First number:', first(numbers));
+console.log('First empty:', first([]));
+
+// Utility types
+interface TestUser {
+  username: string;
+  password: string;
+  role: 'admin' | 'customer';
+  email: string;
+}
+
+// Test data builder using Partial
+function buildUser(overrides: Partial<TestUser> = {}): TestUser {
+  return {
+    username: 'standard_user',
+    password: 'secret_sauce',
+    role: 'customer',
+    email: 'test@example.com',
+    ...overrides,
+  };
+}
+
+const defaultUser = buildUser();
+const adminUser = buildUser({ username: 'admin', role: 'admin' });
+
+console.log('Default:', defaultUser.username, defaultUser.role);
+console.log('Admin:', adminUser.username, adminUser.role);
+
+// Record for test data
+type Env = 'staging' | 'production';
+const baseURLs: Record<Env, string> = {
+  staging: 'https://staging.saucedemo.com',
+  production: 'https://www.saucedemo.com',
+};
+console.log('Staging URL:', baseURLs.staging);
+`}
+/>
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="ts-generics-utility" questions={[
+  {
+    q: "What are TypeScript generics and why are they useful in test automation?",
+    a: "Generics let you write reusable functions and types that work with any type while preserving type information. In test automation: generic data builders (buildUser<T>(overrides: Partial<T>)), generic response wrappers for API tests, generic fixture factories. They eliminate duplication without sacrificing type safety.",
+    senior: "The most powerful use of generics in Playwright fixtures is typed fixture extension. Playwright's test.extend<T>() is generic — you provide the fixture type T and TypeScript enforces that your fixture implementation matches. Without generics, you'd need to cast everything to any, losing all type safety at the fixture boundary."
+  },
+  {
+    q: "What does Partial<T> do and when would you use it in a test project?",
+    a: "Partial<T> makes all properties of T optional. Primary use in test automation: test data builders where you want sensible defaults with targeted overrides. Instead of requiring all fields every time, you pass only the fields that differ from the default: buildUser({ role: 'admin' }) rather than buildUser({ username: 'x', password: 'y', role: 'admin', email: 'z' }).",
+    senior: "Partial<T> combined with object spread is the TypeScript pattern for the Builder pattern without a fluent API. It is simpler than a full Builder class for most test data scenarios. Where it breaks down: when the overrides themselves have complex validation (e.g., email must be valid, role must match allowed values for the test scenario). At that point, typed factory functions with overloads or discriminated unions are more appropriate."
+  },
+  {
+    q: "What is the Record<K, V> utility type and how does it differ from a plain object type?",
+    a: "Record<K, V> creates a type with keys of type K and values of type V. Unlike a plain object type { [key: string]: V }, Record<K, V> constrains the keys to a specific set (typically a union of string literals), so TypeScript will error if you access a key not in K. Use it for typed lookup tables: Record<BrowserName, string>, Record<Environment, URL>.",
+    senior: "Record<K, V> forces exhaustiveness when K is a union: if you add 'safari' to the BrowserName union but forget to add it to the Record, TypeScript will error at the declaration site. This is a compile-time exhaustiveness check with no runtime overhead. The equivalent without Record requires manual keyof checks or ESLint rules."
+  },
+]} />
