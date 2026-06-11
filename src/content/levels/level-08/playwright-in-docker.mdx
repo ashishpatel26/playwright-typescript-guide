@@ -1,0 +1,169 @@
+---
+title: "Playwright in Docker"
+level: 8
+order: 2
+description: "Run Playwright tests reliably in Docker containers using the official Microsoft image."
+duration: "35 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## The Official Playwright Docker Image
+
+Microsoft publishes official images at `mcr.microsoft.com/playwright`:
+
+```bash
+# Pull specific version (always pin in CI)
+docker pull mcr.microsoft.com/playwright:v1.45.0-jammy
+
+# Available variants
+mcr.microsoft.com/playwright:v1.45.0-jammy           # Ubuntu 22.04 (recommended)
+mcr.microsoft.com/playwright:v1.45.0-focal           # Ubuntu 20.04
+mcr.microsoft.com/playwright:v1.45.0-jammy-arm64     # Apple Silicon / ARM CI
+```
+
+**Always pin the version tag** — `latest` will silently update and break reproducibility.
+
+## Dockerfile for Playwright Project
+
+```dockerfile
+FROM mcr.microsoft.com/playwright:v1.45.0-jammy
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+COPY playwright.config.ts .
+COPY e2e/ ./e2e/
+COPY src/ ./src/
+
+ENV CI=true
+
+CMD ["npx", "playwright", "test"]
+```
+
+## Running Tests in Docker
+
+```bash
+# Basic run
+docker run --rm \
+  mcr.microsoft.com/playwright:v1.45.0-jammy \
+  bash -c "cd /app && npx playwright test"
+
+# With test project mounted (live code, no rebuild)
+docker run --rm \
+  -v $(pwd):/app \
+  -w /app \
+  -e BASE_URL=https://staging.example.com \
+  mcr.microsoft.com/playwright:v1.45.0-jammy \
+  npx playwright test
+
+# Collect report
+docker run --rm \
+  -v $(pwd):/app \
+  -w /app \
+  -v $(pwd)/playwright-report:/app/playwright-report \
+  mcr.microsoft.com/playwright:v1.45.0-jammy \
+  npx playwright test --reporter=html
+```
+
+## Headed Mode in Docker (with Xvfb)
+
+The official image includes Xvfb for headed testing:
+
+```bash
+# Run with virtual display
+docker run --rm \
+  -e DISPLAY=:99 \
+  mcr.microsoft.com/playwright:v1.45.0-jammy \
+  bash -c "Xvfb :99 -screen 0 1280x1024x24 & npx playwright test --headed"
+```
+
+Generally unnecessary — use headless in CI. Headed Docker is for debugging specific rendering issues.
+
+## Security: Non-Root User
+
+```dockerfile
+FROM mcr.microsoft.com/playwright:v1.45.0-jammy
+
+WORKDIR /app
+
+# Create non-root user
+RUN groupadd -r pwuser && useradd -r -g pwuser -G audio,video pwuser \
+  && mkdir -p /home/pwuser/Downloads \
+  && chown -R pwuser:pwuser /home/pwuser \
+  && chown -R pwuser:pwuser /app
+
+COPY --chown=pwuser:pwuser package*.json ./
+RUN npm ci
+
+COPY --chown=pwuser:pwuser . .
+
+USER pwuser
+
+CMD ["npx", "playwright", "test"]
+```
+
+The official image already runs as a non-root user by default — check with `docker run --rm mcr.microsoft.com/playwright:v1.45.0-jammy whoami`.
+
+## Resource Limits
+
+```bash
+# Limit CPU and memory — prevent runaway containers in shared CI
+docker run --rm \
+  --cpus="2.0" \
+  --memory="4g" \
+  --memory-swap="4g" \
+  my-pw-tests
+```
+
+Playwright + Chromium: budget ~500MB per worker. 4 workers = ~2GB.
+
+## Playwright Config Inside Docker
+
+```ts
+// playwright.config.ts — CI / Docker aware
+export default defineConfig({
+  workers: process.env.CI ? 2 : undefined,
+  retries: process.env.CI ? 1 : 0,
+  use: {
+    headless: true,             // always headless in container
+    launchOptions: {
+      args: [
+        '--no-sandbox',         // required in some Docker environments
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',  // use /tmp instead of /dev/shm (small in Docker)
+      ],
+    },
+  },
+});
+```
+
+**Note:** The official Playwright image configures these flags automatically. Only add manually if using a custom base image.
+
+## CI Integration Example (GitHub Actions)
+
+```yaml
+- name: Run Playwright in Docker
+  run: |
+    docker run --rm \
+      -v ${{ github.workspace }}:/app \
+      -w /app \
+      -e BASE_URL=${{ vars.STAGING_URL }} \
+      -e CI=true \
+      mcr.microsoft.com/playwright:v1.45.0-jammy \
+      npx playwright test --reporter=blob
+
+  # Then upload the blob artifact for report merging
+```
+
+<QuizCard client:only="react" storageKey="docker-pw" questions={[
+  { q: "Why should you always pin the Playwright Docker image version rather than using `latest`?", a: "Playwright version determines browser versions bundled in the image. `latest` can silently update browsers between runs, breaking tests that depend on specific browser behaviour. Pin to get reproducible environments." },
+  { q: "What does `--disable-dev-shm-usage` do in Playwright's Chromium launch args?", a: "Redirects Chromium's shared memory from `/dev/shm` (limited to 64MB in Docker by default) to `/tmp`. Without it, complex pages crash with 'page crashed' errors due to shared memory exhaustion." },
+  { q: "How do you get the Playwright HTML report OUT of a Docker container?", a: "Mount the report output directory from host into container: `-v $(pwd)/playwright-report:/app/playwright-report`. Reports written inside `/app/playwright-report` appear on the host after container exit." },
+  { q: "When is headed mode in Docker actually needed?", a: "Rarely — mainly for debugging rendering bugs specific to the container environment. Use `Xvfb` virtual display. For CI, headless is always correct and uses fewer resources.", senior: "If a test passes headless locally but fails headless in Docker, check font rendering, viewport differences, or missing system fonts — not headed mode." }
+]} />

@@ -1,0 +1,178 @@
+---
+title: "Docker Compose for Test Stacks"
+level: 8
+order: 3
+description: "Orchestrate multi-service test environments with Docker Compose — app, database, and test runner together."
+duration: "30 min"
+status: complete
+widgets:
+  - diagram
+  - quiz
+---
+
+import MermaidDiagram from '../../../components/react/MermaidDiagram';
+import QuizCard from '../../../components/react/QuizCard';
+
+## Test Stack Architecture
+
+<MermaidDiagram client:only="react" chart={`flowchart TB\n  subgraph Docker Network\n    A["🧪 pw-tests<br/>Playwright runner"] --> B["🌐 app<br/>Node.js / Next.js"]\n    A --> C["🗄️ db<br/>PostgreSQL"]\n    B --> C\n    A --> D["🔴 redis<br/>Cache / Sessions"]\n    B --> D\n  end\n  E["CI runner<br/>GitHub Actions"] --> A\n  style A stroke:#F05133\n  style B stroke:#6BB5FF\n  style C stroke:#FFB454\n  style D stroke:#FF6B6B`} />
+
+## Basic `docker-compose.yml`
+
+```yaml
+# docker-compose.yml
+version: '3.9'
+
+services:
+  app:
+    image: my-app:latest
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://user:pass@db:5432/testdb
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: testdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d testdb"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+
+  pw-tests:
+    image: mcr.microsoft.com/playwright:v1.45.0-jammy
+    working_dir: /app
+    volumes:
+      - .:/app
+      - playwright-report:/app/playwright-report
+    environment:
+      BASE_URL: http://app:3000
+      DATABASE_URL: postgres://user:pass@db:5432/testdb
+      CI: "true"
+    command: npx playwright test
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  playwright-report:
+```
+
+## Running the Stack
+
+```bash
+# Start all services and run tests
+docker compose up --exit-code-from pw-tests
+
+# Exit code matches the test runner exit code:
+# 0 = all tests passed
+# 1 = test failures
+# Use for CI pass/fail
+
+# Teardown (remove containers + networks)
+docker compose down
+
+# With volume cleanup
+docker compose down -v
+```
+
+## Override File for CI vs Local
+
+```yaml
+# docker-compose.override.yml (local dev — not committed or committed separately)
+services:
+  pw-tests:
+    command: npx playwright test --headed
+    environment:
+      PWDEBUG: "1"
+```
+
+```yaml
+# docker-compose.ci.yml (CI-specific overrides)
+services:
+  pw-tests:
+    command: npx playwright test --reporter=blob,junit
+```
+
+```bash
+# CI usage
+docker compose -f docker-compose.yml -f docker-compose.ci.yml up --exit-code-from pw-tests
+```
+
+## Healthchecks — Critical for Test Reliability
+
+Without healthchecks, the test container starts before the app is ready:
+
+```yaml
+app:
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+    interval: 5s
+    retries: 10
+
+pw-tests:
+  depends_on:
+    app:
+      condition: service_healthy    # wait until app healthcheck passes
+```
+
+## Database Seeding
+
+```yaml
+db-seed:
+  image: postgres:16-alpine
+  environment:
+    PGPASSWORD: pass
+  command: >
+    sh -c "
+      until pg_isready -h db -U user; do sleep 1; done
+      psql -h db -U user -d testdb -f /seeds/seed.sql
+    "
+  volumes:
+    - ./seeds:/seeds
+  depends_on:
+    db:
+      condition: service_healthy
+```
+
+## Useful Commands
+
+```bash
+# Watch test logs
+docker compose logs -f pw-tests
+
+# Run specific test file
+docker compose run --rm pw-tests npx playwright test e2e/auth.spec.ts
+
+# Open interactive shell in test container
+docker compose run --rm pw-tests bash
+
+# Scale workers
+docker compose up --scale pw-tests=4  # 4 test containers (shard-like)
+```
+
+<QuizCard client:only="react" storageKey="docker-compose" questions={[
+  { q: "Why use `condition: service_healthy` in `depends_on` rather than `condition: service_started`?", a: "`service_started` means the container process launched — the service may not be ready to accept connections yet. `service_healthy` waits for the healthcheck to pass — the service is actually ready." },
+  { q: "What does `--exit-code-from pw-tests` do in `docker compose up`?", a: "Returns the exit code of the `pw-tests` service instead of always returning 0. CI can use this exit code to fail the pipeline when tests fail." },
+  { q: "How do you get the Playwright report out of a Docker Compose run?", a: "Declare a named volume (`playwright-report`) mounted into the test container at the report output path. After `docker compose down`, copy the volume contents to the host, or use a bind mount (`./playwright-report:/app/playwright-report`) instead." },
+  { q: "What is a `docker-compose.override.yml` file and when is it useful?", a: "Docker Compose automatically merges `docker-compose.override.yml` with `docker-compose.yml` on `docker compose up`. Use it for local dev overrides (headed mode, debug ports) without modifying the base compose file." }
+]} />

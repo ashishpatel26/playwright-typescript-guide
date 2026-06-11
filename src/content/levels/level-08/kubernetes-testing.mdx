@@ -1,0 +1,189 @@
+---
+title: "Kubernetes Test Execution"
+level: 8
+order: 4
+description: "Run Playwright tests as Kubernetes Jobs and CronJobs for scalable, scheduled execution."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Why Kubernetes for Tests?
+
+Kubernetes (k8s) enables:
+- **Scalable execution** — spin up N pods for parallel sharding
+- **Scheduled runs** — CronJob for nightly regression suites
+- **Resource isolation** — CPU/memory limits per test pod
+- **Cloud-native CI** — tests run inside the same cluster as the app under test
+
+## Playwright Test Job
+
+```yaml
+# playwright-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: playwright-tests
+  namespace: testing
+spec:
+  completions: 1
+  backoffLimit: 0               # don't retry on failure — report clearly
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: playwright
+          image: mcr.microsoft.com/playwright:v1.45.0-jammy
+          workingDir: /app
+          command: ["npx", "playwright", "test"]
+          env:
+            - name: BASE_URL
+              value: "http://app-service.default.svc.cluster.local"
+            - name: CI
+              value: "true"
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: test-secrets
+                  key: api-key
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1"
+            limits:
+              memory: "4Gi"
+              cpu: "2"
+          volumeMounts:
+            - name: test-code
+              mountPath: /app
+            - name: reports
+              mountPath: /app/playwright-report
+      volumes:
+        - name: test-code
+          configMap:
+            name: test-config
+        - name: reports
+          emptyDir: {}
+```
+
+## Parallel Sharding with Jobs
+
+```yaml
+# playwright-sharded-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: playwright-sharded
+spec:
+  completions: 4                 # total shards
+  parallelism: 4                 # run all shards simultaneously
+  completionMode: Indexed        # JOB_COMPLETION_INDEX = 0,1,2,3
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: playwright
+          image: my-pw-tests:latest
+          command:
+            - sh
+            - -c
+            - |
+              SHARD=$((JOB_COMPLETION_INDEX + 1))
+              npx playwright test --shard=$SHARD/4 --reporter=blob
+          env:
+            - name: JOB_COMPLETION_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+```
+
+## Nightly CronJob
+
+```yaml
+# playwright-cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: playwright-nightly
+  namespace: testing
+spec:
+  schedule: "0 2 * * *"         # 2 AM UTC every day
+  concurrencyPolicy: Forbid     # don't overlap runs
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: playwright
+              image: my-pw-tests:latest
+              command: ["npx", "playwright", "test", "--reporter=html,junit"]
+              env:
+                - name: BASE_URL
+                  value: "https://production.example.com"
+```
+
+## Secrets in Kubernetes
+
+```bash
+# Create secret from literal values
+kubectl create secret generic test-secrets \
+  --from-literal=api-key=mysecretkey \
+  --from-literal=db-password=dbpassword \
+  -n testing
+
+# Reference in Pod spec
+env:
+  - name: API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: test-secrets
+        key: api-key
+```
+
+**Never commit secrets to YAML files.** Use `kubectl create secret` or sealed-secrets / external-secrets operator.
+
+## Running and Monitoring
+
+```bash
+# Apply job
+kubectl apply -f playwright-job.yaml
+
+# Watch pod status
+kubectl get pods -n testing -w
+
+# Stream logs
+kubectl logs -f job/playwright-tests -n testing
+
+# Get exit code
+kubectl get job playwright-tests -n testing -o jsonpath='{.status.conditions[0].type}'
+# "Complete" = passed, "Failed" = failed
+
+# Cleanup
+kubectl delete job playwright-tests -n testing
+```
+
+## When to Use Kubernetes vs Docker Compose
+
+| Scenario | Use |
+|---|---|
+| Local dev test run | Docker Compose |
+| Simple CI (GitHub Actions) | Docker container in CI runner |
+| Large parallel suite (>50 tests) | k8s Job with sharding |
+| Scheduled nightly regression | k8s CronJob |
+| Tests run inside production cluster | k8s Job (internal DNS access) |
+| Isolated microservice testing | Docker Compose with service mesh |
+
+<QuizCard client:only="react" storageKey="docker-k8s" questions={[
+  { q: "What Kubernetes resource type runs a one-time batch task like a Playwright test suite?", a: "A `Job`. It creates one or more Pods, runs them to completion, and tracks success/failure. For scheduled runs, use a `CronJob` which creates Jobs on a schedule." },
+  { q: "How does `completionMode: Indexed` enable Playwright sharding in Kubernetes?", a: "Indexed mode assigns each Pod a unique `JOB_COMPLETION_INDEX` (0, 1, 2...). The test command uses this index to calculate the shard number: `--shard=$((INDEX+1))/N`." },
+  { q: "Why set `backoffLimit: 0` on a Playwright test Job?", a: "Prevents k8s from retrying the Job pod on failure. Test failures should surface clearly, not be silently retried. If you want Playwright-level retries, use `retries` in `playwright.config.ts`." },
+  { q: "What is the advantage of running tests inside the Kubernetes cluster rather than against an external URL?", a: "Tests can reach services via internal DNS (`service-name.namespace.svc.cluster.local`) without exposing them publicly. Also faster — no public network round-trip, no TLS overhead for internal APIs." }
+]} />

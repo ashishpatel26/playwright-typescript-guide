@@ -1,0 +1,135 @@
+---
+title: "Docker Fundamentals"
+level: 8
+order: 1
+description: "Understand Docker images, containers, and Dockerfiles — the foundation for containerised test execution."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Why Docker for Test Automation?
+
+Docker solves the "works on my machine" problem. Containerised tests:
+- Run identically on dev laptops, CI servers, and cloud runners
+- Package all browser dependencies — no manual apt-get installs
+- Isolate test environments from each other
+- Enable reproducible test infrastructure as code
+
+## Key Concepts
+
+| Term | Meaning |
+|---|---|
+| **Image** | Read-only template (filesystem + metadata). Built from a Dockerfile |
+| **Container** | Running instance of an image — isolated process |
+| **Dockerfile** | Recipe for building an image |
+| **Registry** | Image storage (Docker Hub, GitHub Container Registry, ECR) |
+| **Volume** | Persistent storage mounted into a container |
+| **Network** | Virtual network connecting containers |
+
+## Essential Commands
+
+```bash
+# Images
+docker pull node:20-slim                    # download image
+docker images                               # list local images
+docker rmi node:20-slim                     # remove image
+docker build -t my-tests:latest .           # build from Dockerfile
+
+# Containers
+docker run -it node:20-slim bash            # interactive shell
+docker run --rm my-tests:latest             # run and auto-remove
+docker ps                                   # running containers
+docker ps -a                                # all containers (inc stopped)
+docker stop <id>                            # stop container
+docker logs <id>                            # view logs
+
+# Cleanup
+docker system prune -f                      # remove stopped containers + unused images
+```
+
+## Dockerfile for Playwright Tests
+
+```dockerfile
+# Use official Playwright image as base — browsers pre-installed
+FROM mcr.microsoft.com/playwright:v1.45.0-jammy
+
+WORKDIR /app
+
+# Copy package files first — layer caching: deps only rebuild on package.json change
+COPY package*.json ./
+RUN npm ci
+
+# Copy test files
+COPY . .
+
+# Default command
+CMD ["npx", "playwright", "test"]
+```
+
+```bash
+# Build and run
+docker build -t pw-tests:latest .
+docker run --rm \
+  -e BASE_URL=https://staging.example.com \
+  -e API_KEY=secret \
+  -v $(pwd)/playwright-report:/app/playwright-report \
+  pw-tests:latest
+```
+
+## Layer Caching
+
+Docker caches each layer. Copy `package*.json` before source files — dependencies only reinstall when `package-lock.json` changes:
+
+```dockerfile
+# ✅ Efficient: deps cached unless package-lock.json changes
+COPY package*.json ./
+RUN npm ci
+COPY . .
+
+# ❌ Inefficient: any source change triggers full npm ci
+COPY . .
+RUN npm ci
+```
+
+## `.dockerignore`
+
+```
+node_modules/
+playwright-report/
+test-results/
+.env
+.git/
+*.md
+```
+
+Prevents large directories from bloating the build context.
+
+## Environment Variables in Containers
+
+```bash
+# Pass single variable
+docker run -e API_KEY=secret my-tests
+
+# Pass from host environment
+docker run -e API_KEY my-tests
+
+# Pass from .env file
+docker run --env-file .env my-tests
+```
+
+```dockerfile
+# Dockerfile: declare expected variables (documentation)
+ENV BASE_URL=http://localhost:3000
+ENV CI=true
+```
+
+<QuizCard client:only="react" storageKey="docker-basics" questions={[
+  { q: "What is the difference between a Docker image and a container?", a: "An image is a read-only template (filesystem snapshot). A container is a running instance of an image — an isolated process with its own filesystem, network, and process space." },
+  { q: "Why copy `package*.json` before `COPY . .` in a Dockerfile?", a: "Docker caches each layer. Copying package files first means `npm ci` only re-runs when `package-lock.json` changes, not on every source file edit. This saves minutes per build." },
+  { q: "What does the `-v $(pwd)/playwright-report:/app/playwright-report` flag do?", a: "Mounts the host's `playwright-report` directory into the container at `/app/playwright-report`. Reports written inside the container appear on the host after the run — otherwise they're lost when the container exits." },
+  { q: "What should always be in `.dockerignore` for a test project?", a: "`node_modules/` (rebuilt inside container), `playwright-report/` and `test-results/` (outputs, not inputs), `.env` (secrets), `.git/` (not needed, large). Keeps build context small and secrets safe." }
+]} />
