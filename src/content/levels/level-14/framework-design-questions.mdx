@@ -1,0 +1,137 @@
+---
+title: "Framework Design Questions"
+level: 14
+order: 1
+description: "Master the most common framework architecture interview questions — POM, fixtures, helpers, and test structure decisions."
+duration: "40 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## What Interviewers Are Testing
+
+Framework design questions assess whether you can build a maintainable, scalable test suite — not just write individual tests. They want to know:
+
+- Do you separate concerns (page logic vs. test logic)?
+- Do you make tests readable to non-engineers?
+- Do you reduce duplication without over-abstracting?
+- Do you handle cross-cutting concerns (auth, data, reporting) cleanly?
+
+## Common Questions & Strong Answers
+
+### "How would you structure a Playwright test framework from scratch?"
+
+**Strong answer structure:**
+1. Start with project goals (team size, app type, CI requirements)
+2. Define layers (page objects, fixtures, utilities, tests)
+3. Explain config strategy (environments, reporters)
+4. Describe CI integration
+
+```
+playwright-tests/
+├── e2e/
+│   ├── auth/          # auth flow tests
+│   ├── checkout/      # checkout flow tests
+│   └── smoke/         # cross-cutting smoke suite
+├── pages/             # Page Object classes
+├── fixtures/          # Custom Playwright fixtures
+├── utils/             # Pure helpers (data factories, API clients)
+├── playwright.config.ts
+└── global-setup.ts    # storageState, DB seed
+```
+
+### "What is the Page Object Model and when would you NOT use it?"
+
+**POM:**
+```ts
+// pages/LoginPage.ts
+export class LoginPage {
+  constructor(private page: Page) {}
+
+  async login(email: string, password: string) {
+    await this.page.getByLabel('Email').fill(email);
+    await this.page.getByLabel('Password').fill(password);
+    await this.page.getByRole('button', { name: 'Sign in' }).click();
+  }
+
+  async getErrorMessage() {
+    return this.page.getByRole('alert').textContent();
+  }
+}
+```
+
+**When NOT to use POM:**
+- One-off scripts or exploratory tests
+- Very simple apps with 2-3 pages
+- When the overhead of maintaining page classes exceeds the benefit
+- Teams that prefer a more functional/procedural style (use plain helpers instead)
+
+### "How do you share state between tests without coupling them?"
+
+```ts
+// ❌ Shared mutable state — order-dependent, fragile
+let userId: string;
+test.beforeAll(async () => { userId = await createUser(); });
+test('uses userId', async ({ page }) => { /* depends on above */ });
+
+// ✅ Fixture-based isolation — each test self-contained
+const test = base.extend<{ user: User }>({
+  user: async ({ request }, use) => {
+    const user = await createUserViaApi(request);
+    await use(user);
+    await deleteUserViaApi(request, user.id); // teardown
+  },
+});
+```
+
+### "How do you handle authentication across your test suite?"
+
+```ts
+// global-setup.ts: authenticate once, save storageState
+async function globalSetup() {
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  await page.goto('/login');
+  await page.getByLabel('Email').fill(process.env.TEST_USER!);
+  await page.getByLabel('Password').fill(process.env.TEST_PASS!);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.context().storageState({ path: 'playwright/.auth/user.json' });
+  await browser.close();
+}
+
+// playwright.config.ts
+export default defineConfig({
+  use: { storageState: 'playwright/.auth/user.json' },
+  globalSetup: './global-setup.ts',
+});
+```
+
+## Questions About Fixtures
+
+### "What's the difference between a fixture and a helper function?"
+
+| | Fixture | Helper function |
+|---|---|---|
+| **Lifecycle** | Setup + teardown, scoped to test | No lifecycle management |
+| **DI** | Injected by Playwright automatically | Called explicitly |
+| **Scope** | `test` / `worker` / `file` | N/A |
+| **Use for** | Resources with cleanup (DB, auth, browser context) | Pure transformations (format date, generate ID) |
+
+### "When would you use `worker` scope vs `test` scope for a fixture?"
+
+- `test` scope: State that must be isolated per test (user session, created records)
+- `worker` scope: Expensive shared resources safe to reuse (DB connection pool, authenticated context for read-only tests)
+
+<QuizCard client:only="react" storageKey="iv-framework" questions={[
+  { q: "An interviewer asks: 'Your POM classes are growing to 500+ lines. What would you do?' What's the best answer?", a: "Split by concern: separate navigation methods (goto, navigate) from action methods (fillForm, submit) from assertion helpers (expectError). Or split by feature area — a 500-line LoginPage likely has register/reset-password/2FA that each deserve their own class. Extract shared base classes for common patterns (e.g., a BasePage with wait utilities).", senior: true },
+  { q: "What is a Playwright fixture and how does it differ from a beforeEach hook?", a: "A fixture is a dependency-injected resource with automatic setup/teardown. Unlike beforeEach, fixtures are composable (fixtures can depend on other fixtures), scoped (test/worker/file), and only instantiated when a test actually requests them. beforeEach always runs; fixtures are lazy." },
+  { q: "How would you structure test data — hardcoded, factories, or seeded DB?", a: "Factories for most cases: generate unique data per test via functions (e.g., `makeUser({ role: 'admin' })`). Seeded DB for complex relational scenarios that would be expensive to create via API. Never hardcode — shared hardcoded data causes order-dependency and flakiness.", senior: true },
+  { q: "What goes in `global-setup.ts` vs a `beforeAll` fixture?", a: "global-setup.ts: one-time expensive operations across the entire suite — authenticate and save storageState, seed a shared read-only DB snapshot, start external services. beforeAll: per-file expensive setup that varies between test files — creating a specific test resource shared within one describe block." },
+  { q: "How do you make test helpers readable to non-engineers (e.g., product managers reviewing test names)?", a: "Use domain language in test names: 'user can complete checkout with saved card' not 'checkout_test_1'. Wrap multi-step sequences in named methods on page objects. Use `test.step()` to add human-readable labels to test phases that appear in the HTML report." },
+  { q: "An interviewer asks: 'How would you handle tests that depend on third-party APIs that are slow or flaky?' What's your answer?", a: "Two strategies: 1) `page.route()` to intercept and mock the API at the network level for speed and reliability. 2) Separate test suites — a fast mock-based suite for CI and a slower integration suite against real APIs on a schedule. Never add `waitForTimeout` to work around API latency.", senior: true },
+  { q: "What's the risk of putting test assertions inside Page Object methods?", a: "Violates separation of concerns — page objects should model the interface, not encode expected outcomes. If an assertion is in the PO, you can't reuse the PO method in a test that expects a different outcome. Keep assertions in test files; expose getters from page objects that tests assert on." },
+  { q: "How do you prevent test pollution when tests create database records?", a: "Use transactions rolled back after each test (BEGIN/ROLLBACK pattern with a DB fixture). Or use API teardown in fixture afterEach to delete created records. Or run each test in an isolated DB schema. The fixture pattern ensures cleanup even when tests fail mid-run." }
+]} />

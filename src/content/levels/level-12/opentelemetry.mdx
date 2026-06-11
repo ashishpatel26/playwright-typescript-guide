@@ -1,0 +1,199 @@
+---
+title: "OpenTelemetry for Test Engineers"
+level: 12
+order: 2
+description: "Understand OpenTelemetry's role in test observability — instrumenting apps and asserting telemetry in tests."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## What Is OpenTelemetry?
+
+OpenTelemetry (OTel) is the CNCF standard for generating, collecting, and exporting telemetry data (traces, metrics, logs). It replaces vendor-specific SDKs with a single, portable API.
+
+**Key components:**
+- **API** — language-specific interfaces for instrumentation
+- **SDK** — implementation of the API (sampling, batching, export)
+- **Collector** — receives, processes, and exports telemetry to backends
+- **OTLP** — OpenTelemetry Protocol (the wire format)
+
+## OTel Architecture
+
+```
+Application                   OTel Collector          Backends
+──────────                    ──────────────          ────────
+Node.js app                   ┌─────────────┐
+├── OTel SDK ──OTLP──────────►│  Receiver   │
+│   ├── Traces                │  Processor  ├──► Jaeger (traces)
+│   ├── Metrics               │  Exporter   ├──► Prometheus (metrics)
+│   └── Logs                  └─────────────┘    ├──► Grafana Loki (logs)
+```
+
+## Instrumenting Node.js
+
+```ts
+// tracing.ts — init before app code
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';
+import { PgInstrumentation } from '@opentelemetry/instrumentation-pg';
+
+const sdk = new NodeSDK({
+  serviceName: 'checkout-api',
+  traceExporter: new OTLPTraceExporter({
+    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://localhost:4318/v1/traces',
+  }),
+  instrumentations: [
+    new HttpInstrumentation(),
+    new ExpressInstrumentation(),
+    new PgInstrumentation(),
+  ],
+});
+
+sdk.start();
+```
+
+```bash
+# Start app with OTel
+node -r ./tracing.js app.js
+```
+
+## Custom Spans
+
+```ts
+import { trace, context, SpanStatusCode } from '@opentelemetry/api';
+
+const tracer = trace.getTracer('checkout-service');
+
+async function processPayment(orderId: string, amount: number) {
+  return tracer.startActiveSpan('process-payment', async (span) => {
+    span.setAttributes({
+      'order.id': orderId,
+      'payment.amount': amount,
+      'payment.currency': 'USD',
+    });
+
+    try {
+      const result = await chargeCard(amount);
+      span.setStatus({ code: SpanStatusCode.OK });
+      return result;
+    } catch (err: unknown) {
+      span.recordException(err as Error);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+      throw err;
+    } finally {
+      span.end();
+    }
+  });
+}
+```
+
+## Asserting Telemetry in Tests
+
+Use an in-memory exporter or a test-mode OTel Collector to assert spans in tests:
+
+```ts
+// test-tracing.ts — in-memory exporter for tests
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+
+export const exporter = new InMemorySpanExporter();
+export const provider = new NodeTracerProvider();
+provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
+provider.register();
+```
+
+```ts
+import { exporter } from './test-tracing';
+import { test, expect } from '@playwright/test';
+
+test.beforeEach(() => exporter.reset());
+
+test('payment failure creates error span', async ({ request }) => {
+  await request.post('/api/checkout', {
+    data: { cardNumber: '4000000000000002', amount: 100 },
+  });
+
+  const spans = exporter.getFinishedSpans();
+  const paymentSpan = spans.find(s => s.name === 'process-payment');
+
+  expect(paymentSpan).toBeDefined();
+  expect(paymentSpan!.status.code).toBe(SpanStatusCode.ERROR);
+  expect(paymentSpan!.attributes['order.id']).toBeDefined();
+  expect(paymentSpan!.events.some(e => e.name === 'exception')).toBe(true);
+});
+```
+
+## OTel Collector Config
+
+```yaml
+# otel-collector-config.yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 1s
+
+exporters:
+  jaeger:
+    endpoint: jaeger:14250
+    tls:
+      insecure: true
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+```
+
+## OTel for Test Automation Insights
+
+```ts
+// Instrument Playwright itself — trace test execution
+import { trace } from '@opentelemetry/api';
+
+const tracer = trace.getTracer('playwright-tests');
+
+test('instrumented test with custom span', async ({ page }) => {
+  const span = tracer.startSpan('e2e-checkout-flow');
+
+  try {
+    await page.goto('/checkout');
+    await page.fill('[name=card]', '4242424242424242');
+    await page.click('[type=submit]');
+    await expect(page.getByText('Order confirmed')).toBeVisible();
+    span.setStatus({ code: SpanStatusCode.OK });
+  } catch (err) {
+    span.recordException(err as Error);
+    span.setStatus({ code: SpanStatusCode.ERROR });
+    throw err;
+  } finally {
+    span.end();
+  }
+});
+```
+
+<QuizCard client:only="react" storageKey="obs-otel" questions={[
+  { q: "What problem does OpenTelemetry solve compared to vendor-specific SDKs?", a: "Vendor lock-in. OTel is a vendor-neutral standard — instrument your app once with the OTel API, then switch backends (Jaeger, Datadog, Honeycomb) by changing the exporter, not the instrumentation." },
+  { q: "What is the OTel Collector and why is it recommended over direct export?", a: "A standalone proxy that receives OTLP telemetry, processes it (sampling, batching, enrichment), and exports to backends. Decouples app from backend — change destinations without redeploying the app. Also buffers during backend outages." },
+  { q: "How do you assert OTel spans in unit/integration tests?", a: "Use `InMemorySpanExporter` — it captures finished spans in memory. In `beforeEach` call `exporter.reset()`. After the operation, call `exporter.getFinishedSpans()` and assert span names, attributes, and status." },
+  { q: "What should a custom span include when wrapping a business operation?", a: "Name (operation), relevant attributes (IDs, amounts, context), status code (OK/ERROR), and exception recording on failure via `span.recordException(err)`. Always call `span.end()` in a `finally` block." }
+]} />

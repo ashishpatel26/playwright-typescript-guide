@@ -101,4 +101,19 @@ test.describe('Widget smoke tests', () => {
     await page.goto('levels/11/owasp-top-10/');
     await expect(page.locator('[data-testid="quiz-card"]')).toBeVisible({ timeout: 15000 });
   });
+
+  test('L12 logs-metrics-traces renders with Mermaid diagram', async ({ page }) => {
+    await page.goto('levels/12/logs-metrics-traces/');
+    await expect(page.locator('svg[id^="mmd-"]').first()).toBeVisible({ timeout: 20000 });
+  });
+
+  test('L13 mcp-fundamentals renders with Mermaid diagram', async ({ page }) => {
+    await page.goto('levels/13/mcp-fundamentals/');
+    await expect(page.locator('svg[id^="mmd-"]').first()).toBeVisible({ timeout: 20000 });
+  });
+
+  test('L14 framework-design-questions renders with quiz', async ({ page }) => {
+    await page.goto('levels/14/framework-design-questions/');
+    await expect(page.locator('[data-testid="quiz-card"]')).toBeVisible({ timeout: 15000 });
+  });
 });

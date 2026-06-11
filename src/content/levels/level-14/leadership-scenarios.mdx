@@ -1,0 +1,161 @@
+---
+title: "Leadership & Scenario Questions"
+level: 14
+order: 4
+description: "Navigate technical leadership scenarios — managing flaky tests, rebuilding broken suites, mentoring, incident response, and stakeholder communication."
+duration: "40 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Leadership Interviews vs Technical Interviews
+
+Technical interviews test: "Can you build this?"
+Leadership interviews test: "Can you lead a team to build this sustainably?"
+
+Expect scenario questions starting with "Tell me about a time..." or "How would you handle...". Use the STAR format: Situation → Task → Action → Result.
+
+## Scenario: Flaky Test Suite
+
+**"We have 500 tests and 30% of CI runs have at least one flaky failure. What do you do?"**
+
+```
+Step 1: Measure
+  - Run suite 10 times, record which tests flake and how often
+  - Identify top 10 flaky tests (Pareto: 20% cause 80% of pain)
+
+Step 2: Triage
+  - Timing issue: add proper waitFor assertions, remove waitForTimeout
+  - Order dependency: add data isolation (unique test data per test)
+  - Infrastructure: investigate network/DB latency, add retries only as last resort
+  - Genuinely non-deterministic: quarantine + file ticket
+
+Step 3: Quarantine
+  - Tag flaky tests @flaky, exclude from PR gate, still run in nightly
+  - Set SLO: fix or delete within 2 sprints
+
+Step 4: Prevent recurrence
+  - Add flakiness detection to CI (run failing tests 3 times, report if inconsistent)
+  - Team norm: no merging tests that fail >1% in first week
+```
+
+## Scenario: Rebuilding a Broken Test Suite
+
+**"You join a team where the test suite hasn't been maintained in a year. 60% of tests fail. What's your plan?"**
+
+```
+Week 1: Assess
+  - Categorise failures: selector failures, logic failures, env failures, skips
+  - Map to current app state — which failures are real bugs vs outdated tests?
+  - Identify the 10-20 highest-value tests worth keeping
+
+Week 2-3: Stabilise
+  - Fix or delete selector failures (selector failures = easy wins)
+  - Delete tests for deprecated features
+  - Quarantine logic failures pending investigation
+  - Get to 80% pass rate with reduced test count
+
+Month 2: Rebuild
+  - Write new tests for critical user journeys with proper fixtures
+  - Establish team norms: tests are part of every story's definition of done
+  - Set up flakiness tracking
+
+Month 3+: Expand
+  - Cover remaining critical paths
+  - Introduce test layers (unit + integration + e2e separation)
+```
+
+## Scenario: Mentoring a Developer on Testing
+
+**"A developer on your team writes tests but they're always brittle and hard to maintain. How do you help them?"**
+
+```ts
+// Common developer testing mistakes and coaching approach:
+
+// Mistake 1: CSS class selectors
+await page.locator('.btn-primary-2').click();
+// Coach: "What if the designer changes that class? Use role/label: getByRole('button', {name: 'Submit'})"
+
+// Mistake 2: Hard sleeps
+await page.waitForTimeout(3000);
+// Coach: "This makes the test 3 seconds slower AND still flaky. Use: await expect(locator).toBeVisible()"
+
+// Mistake 3: No teardown
+test('creates a user', async ({ page }) => {
+  await api.createUser({ email: 'test@test.com' }); // never deleted
+  // Next run: duplicate user error
+});
+// Coach: "Use a fixture with afterEach teardown — I'll show you how"
+
+// Mistake 4: Testing implementation not behaviour
+await expect(page.locator('#isSubmitting')).toHaveAttribute('data-value', 'false');
+// Coach: "Test what the user sees: await expect(submitBtn).toBeEnabled()"
+```
+
+**Coaching approach:** Pair programming review, not code review comments. Show the better pattern in context, explain the WHY (maintainability, not aesthetics), and let them refactor their own test.
+
+## Scenario: Production Incident
+
+**"A critical feature is broken in production and your tests didn't catch it. Post-mortem: what happened and what do you change?"**
+
+```
+Post-mortem template:
+
+1. What broke:       User checkout fails after payment succeeds (double-charge edge case)
+2. Why tests missed: E2E tests use mocked payment gateway; mock didn't simulate retry behaviour
+3. Root cause:       Payment service retry logic introduced last sprint, no test updated
+4. Timeline:         Broke at 14:00, found at 15:30, fixed at 17:00 — 3.5h user impact
+
+Actions:
+- Add integration test against real payment gateway sandbox (not mock)
+- Add contract test for payment retry scenarios
+- Process: payment team must add/update test for any payment logic change
+- Alert: monitor payment success rate in Datadog; alert below 99% in 5min window
+```
+
+## Communicating With Stakeholders
+
+### Making the Case for Test Infrastructure Investment
+
+```
+Stakeholder concern: "Why do we need 2 weeks to refactor our test suite? 
+                       Just fix what's broken."
+
+Your answer:
+"The current suite has 40% flakiness — engineers spend 3+ hours per week 
+re-running CI and investigating false positives. That's 6 engineer-weeks per 
+quarter on noise. 2 weeks of investment returns 18+ weeks of productivity 
+within the first year, plus faster, more confident releases."
+
+Frame it as:
+- Time saved (quantify the current waste)
+- Risk reduction (bugs caught before production)
+- Team velocity (developers trust the suite → merge more confidently)
+```
+
+## Technical Lead Behaviours
+
+What interviewers look for in lead candidates:
+
+| Behaviour | Signs of strength |
+|---|---|
+| **Technical vision** | Can describe a 3-6 month testing roadmap |
+| **Prioritisation** | Knows what NOT to do; manages technical debt consciously |
+| **Mentoring** | Teaches patterns, not just fixes bugs |
+| **Stakeholder communication** | Translates technical metrics into business impact |
+| **Incident ownership** | Runs post-mortems that prevent recurrence |
+| **Culture building** | "Definition of done" includes tests; team norms around test quality |
+
+<QuizCard client:only="react" storageKey="iv-leadership" questions={[
+  { q: "Tell me about a time you improved a broken or unreliable test suite. What was your approach?", a: "Strong answer (STAR): Situation — suite had X% flakiness causing N hours waste per week. Task — reduce flakiness to <5%, restore team confidence. Action — audited all failures, categorised (selector/timing/env), fixed top-10 flakers, quarantined rest with tickets, added retry detection to CI. Result — flakiness dropped to 3% in 4 weeks, CI confidence restored, PRs merged faster.", senior: true },
+  { q: "How do you get a development team to take ownership of test quality when they see testing as 'QA's job'?", a: "Change the definition of done — 'story is done when tests are written and passing', enforced in PR review. Pair with developers to write their first few tests. Show the value: when their tests catch a regression before code review, it clicks. Leadership buy-in matters — if the engineering manager explicitly values test quality in performance reviews, culture changes." },
+  { q: "A product manager wants to skip regression testing to hit a release deadline. How do you respond?", a: "Make the trade-off explicit: 'We can ship now with these 3 known risks uncovered. Here's what each risk could mean in production.' Then let them decide with full information. Offer a middle ground: run the smoke suite (20 min) even if not full regression. Never silently skip testing — the decision to accept risk belongs to product, not you.", senior: true },
+  { q: "How do you structure a post-mortem after a production bug your tests didn't catch?", a: "Five sections: 1) What broke and user impact (quantified). 2) Why tests didn't catch it — specific gap (mock vs real, missing journey, wrong assertion). 3) Root cause (the process failure, not the person). 4) Timeline of detection and fix. 5) Concrete actions with owners and deadlines — test added, alert created, process changed." },
+  { q: "You're tech lead and your team's test suite is slow (45 min per PR). Two engineers say just delete the slow tests. What do you do?", a: "Don't delete blindly. First: profile — identify slowest 10% of tests, check if they're covering critical risk. Shard to reduce wall time (often 4 agents → 10-12 min). For tests that are slow AND low-value, move logic to unit tests. Framing: 'We want fast CI AND confidence — let's find the tests that give us neither.' Delete after demonstrating coverage is maintained.", senior: true },
+  { q: "How do you handle a team member who consistently writes tests that get flagged in review for using brittle selectors?", a: "Private conversation, not public code review criticism. Pair on one test together — show the better selector pattern and explain the maintenance problem it solves. Add a team coding standard document with examples. If the pattern continues, escalate to a team workshop. Assume intent is good; the gap is usually knowledge, not attitude." },
+  { q: "How would you build a 6-month testing roadmap for a team with no existing automation?", a: "Month 1-2: Smoke suite for 5-10 critical paths, basic CI integration, team onboarding to Playwright. Month 3-4: Regression coverage of top 30 user journeys, fixtures for auth/data, flakiness tracking. Month 5-6: Sharding for speed, contract tests for APIs, performance smoke, onboarding second team. Measure monthly: pass rate, duration, bugs caught, team confidence.", senior: true },
+  { q: "How do you decide between mocking a dependency and testing against the real thing?", a: "Mock when: the dependency is external/paid (3rd party API), introduces non-determinism (time, random), or makes the test slow without adding coverage value. Test real when: the integration itself is the risk (DB queries, auth service calls, payment gateway behaviour). Contract tests bridge the gap — mock locally, verify the contract against the real service in CI." }
+]} />

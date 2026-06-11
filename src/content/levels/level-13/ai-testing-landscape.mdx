@@ -1,0 +1,106 @@
+---
+title: "AI in Testing: The Landscape"
+level: 13
+order: 1
+description: "Survey the AI-assisted testing ecosystem — from test generation to self-healing selectors."
+duration: "25 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Why AI Is Transforming Testing
+
+Manual test creation is slow and doesn't scale. AI addresses the three biggest bottlenecks:
+
+1. **Test generation** — write tests from specs, user stories, or app exploration
+2. **Selector maintenance** — self-healing locators that survive UI refactors
+3. **Failure analysis** — diagnose flaky tests and suggest fixes from stack traces
+
+## AI Testing Tool Categories
+
+| Category | Tools | What they do |
+|---|---|---|
+| **Test generation** | Playwright MCP, Copilot, Cursor | Generate test code from natural language |
+| **Self-healing** | Healenium, Applitools, mabl | Fix broken selectors automatically |
+| **Visual testing** | Applitools Eyes, Percy, Chromatic | AI-powered visual diff comparison |
+| **Codegen** | Playwright `codegen`, TestCraft | Record actions → generate test code |
+| **Agentic testing** | Claude Code, OpenAI Agents SDK | LLM agents autonomously explore and test |
+| **Flakiness detection** | Datadog, BuildPulse | ML to identify and quarantine flaky tests |
+
+## AI Test Generation Spectrum
+
+```
+Manual (100% human) ──────────────────► Autonomous (100% AI)
+
+  Human writes ──► AI suggests ──► AI drafts ──► AI executes
+  full test         completions      full test     and iterates
+                    (Copilot)        (Claude Code) (Agents SDK)
+```
+
+Current sweet spot: **AI drafts, human reviews** — 5–10× faster test authoring with human quality gate.
+
+## Playwright Codegen (Built-in)
+
+```bash
+# Record actions → generate test code
+npx playwright codegen https://playwright.dev
+
+# With auth state pre-loaded
+npx playwright codegen --load-storage=playwright/.auth/admin.json https://app.example.com
+
+# Output to file
+npx playwright codegen --output=e2e/generated.spec.ts https://app.example.com
+```
+
+Generated code quality varies — always review and refactor:
+- Replace `page.locator('text=Submit')` with semantic role selectors
+- Add assertions (codegen captures clicks, not assertions)
+- Remove `waitForTimeout` calls
+
+## The Test Pyramid Revisited for AI
+
+```
+         △
+        /E2E\          ← AI can generate; hard to maintain at scale
+       /─────\
+      / Int'n \        ← AI excels here: API chains, DB assertions
+     /─────────\
+    /   Unit    \      ← AI most reliable: isolated functions, clear contracts
+   /─────────────\
+```
+
+AI generates best quality at the unit and integration levels where:
+- Inputs and outputs are well-defined
+- Context fits in a single prompt
+- Assertions can be derived from function signatures
+
+## Limitations of AI-Generated Tests
+
+| Limitation | Why | Mitigation |
+|---|---|---|
+| Hallucinated selectors | AI doesn't see live DOM | Run codegen or use MCP to inspect actual DOM |
+| Missing assertions | AI records actions, not verifications | Add assertions manually after generation |
+| Brittle selectors | AI uses text/CSS, not roles | Refactor to `getByRole`, `getByLabel` |
+| No business context | AI writes what it sees, not why | Review for business-logic coverage |
+| Flaky timing | AI doesn't know app async behaviour | Replace fixed waits with `waitFor*` assertions |
+
+## The Role of AI in a Modern Test Strategy
+
+```
+Sprint planning    → AI suggests test cases from acceptance criteria
+Test writing       → AI drafts; engineer reviews and refines
+CI execution       → Standard Playwright runner (AI output = normal tests)
+Failure triage     → AI diagnoses stack traces, suggests fixes
+Maintenance        → Self-healing for selector drift; AI refactors for API changes
+Coverage analysis  → AI identifies gaps from requirements vs test coverage
+```
+
+<QuizCard client:only="react" storageKey="ai-landscape" questions={[
+  { q: "What are the three main areas where AI is transforming test automation?", a: "Test generation (from specs or app exploration), selector self-healing (surviving UI refactors without manual updates), and failure analysis (diagnosing flakiness and suggesting fixes from stack traces)." },
+  { q: "What is the main limitation of Playwright's built-in `codegen` command for test quality?", a: "Codegen records clicks and navigation but doesn't add assertions — it captures what happened, not what should be verified. Generated tests pass trivially. Engineers must add meaningful assertions and replace text-based locators with role-based ones." },
+  { q: "At which test pyramid level does AI-generated code tend to be most reliable?", a: "Unit and integration levels — inputs/outputs are well-defined, context fits a single prompt, and assertions can be derived from signatures. E2E tests require understanding of full user flows, business rules, and async timing that AI often gets wrong." },
+  { q: "What does 'AI drafts, human reviews' mean and why is it the current sweet spot?", a: "AI generates the initial test code (5-10× faster than writing from scratch), a human engineer reviews for correctness, adds assertions, fixes selectors, and verifies business logic coverage. Combines AI speed with human judgment." }
+]} />

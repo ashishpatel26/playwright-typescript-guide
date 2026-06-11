@@ -1,0 +1,144 @@
+---
+title: "Grafana, Kibana, Datadog & Splunk"
+level: 12
+order: 3
+description: "Navigate the major observability platforms test engineers encounter in production environments."
+duration: "25 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Observability Platform Landscape
+
+| Tool | Category | Strengths | Common in |
+|---|---|---|---|
+| **Grafana** | Dashboards + alerting | Open source, multi-source, Prometheus native | Cloud-native, startups |
+| **Kibana** | Logs + search | ELK Stack, full-text search | Enterprises on Elastic |
+| **Datadog** | APM + logs + metrics | Easy setup, ML anomaly detection | SaaS, mid-large orgs |
+| **Splunk** | Logs + SIEM | Powerful search language (SPL), enterprise | Large enterprises, security |
+| **Jaeger** | Distributed tracing | Open source, OTel native | Kubernetes environments |
+| **Honeycomb** | High-cardinality tracing | Query on any field, no pre-aggregation | Developer-focused |
+
+## Grafana
+
+Grafana connects to data sources (Prometheus, InfluxDB, Loki, Elasticsearch) and visualises metrics and logs.
+
+**Key panels for test engineers:**
+
+```
+Error Rate Dashboard:
+├── Time series: error_rate by service over 24h
+├── Stat: current p95 latency
+├── Table: top 10 slowest endpoints
+└── Logs panel: ERROR-level log stream
+```
+
+**Grafana annotations — mark test runs:**
+```bash
+# Add annotation when tests start
+curl -X POST $GRAFANA_URL/api/annotations \
+  -H "Authorization: Bearer $GRAFANA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Playwright regression started","tags":["test","ci"]}'
+```
+
+This overlays test-run timing on your metrics graphs — visible correlation between test execution and error rate spikes.
+
+## Kibana (ELK Stack)
+
+Elasticsearch + Logstash + Kibana. Search and visualise logs.
+
+**KQL query examples for test investigation:**
+```
+# Find all errors for a specific user
+service.name: "checkout-api" AND level: "ERROR" AND user.id: "user-123"
+
+# Find slow requests
+service.name: "api" AND http.response.duration_ms > 1000
+
+# Find all logs for a trace
+trace.id: "abc-def-123"
+
+# Count errors by service in last hour
+```
+
+**Kibana Discover vs Dashboard:**
+- **Discover:** ad-hoc log investigation (forensics after test failure)
+- **Dashboard:** persistent views of aggregated metrics (SLO monitoring)
+
+## Datadog APM
+
+Datadog provides APM (Application Performance Monitoring) with automatic distributed tracing.
+
+```ts
+// Instrument Node.js for Datadog APM
+// dd-trace auto-instruments popular libraries
+require('dd-trace').init({
+  service: 'checkout-api',
+  env: process.env.DD_ENV ?? 'staging',
+  version: process.env.DD_VERSION ?? '1.0.0',
+  logInjection: true,    // inject traceId into logs automatically
+});
+```
+
+**Datadog for test engineers:**
+- **Synthetic Tests** — scheduled Playwright-like browser tests from global nodes
+- **CI Visibility** — import test results, track flaky tests, failure trends
+- **Log correlation** — filter logs by `traceId` from a failing trace
+
+```bash
+# Send Playwright JUnit results to Datadog CI Visibility
+DD_API_KEY=$DATADOG_API_KEY \
+DD_SITE=datadoghq.com \
+npx @datadog/datadog-ci junit upload \
+  --service playwright-guide \
+  test-results/results.xml
+```
+
+## Splunk
+
+Splunk uses SPL (Splunk Processing Language) for powerful log analysis.
+
+```spl
+-- Find all errors for checkout service in last hour
+index=app_logs service=checkout-api level=ERROR earliest=-1h
+
+-- Calculate error rate
+index=app_logs service=checkout-api
+| stats count(eval(level="ERROR")) as errors, count as total by _time span=5m
+| eval error_rate = errors/total*100
+
+-- Find slow API calls
+index=app_logs duration_ms>1000
+| stats avg(duration_ms) p95(duration_ms) count by endpoint
+| sort -p95(duration_ms)
+```
+
+## Connecting Test Failures to Observability
+
+```ts
+test('checkout failure — link to Datadog trace', async ({ page }) => {
+  // Capture trace ID from response header
+  const traceId = await page.evaluate(async () => {
+    const res = await fetch('/api/checkout', { method: 'POST', body: '{}' });
+    return res.headers.get('x-datadog-trace-id');
+  });
+
+  // On failure: log the observability URL for quick investigation
+  if (traceId) {
+    console.log(`Datadog trace: https://app.datadoghq.com/apm/trace/${traceId}`);
+  }
+});
+```
+
+Best practice: Attach the trace URL to the test failure output so on-call engineers jump straight to the trace.
+
+<QuizCard client:only="react" storageKey="obs-tools" questions={[
+  { q: "What is a Grafana annotation and why is it useful in test automation?", a: "An annotation adds a marker on time-series graphs at a specific timestamp. Add one when CI tests start/end — this overlays test execution timing on error-rate and latency graphs, making correlation between test-triggered load and metric changes visible." },
+  { q: "What is the difference between Kibana Discover and a Kibana Dashboard?", a: "Discover is for ad-hoc log investigation — search, filter, inspect raw events. Dashboard is for persistent aggregated visualisations — metric trends, SLO panels, error counts. Post-incident: use Discover. Ongoing monitoring: use Dashboard." },
+  { q: "What is Datadog CI Visibility and what problem does it solve?", a: "A Datadog feature that ingests test results (JUnit XML) and tracks test health over time — flakiness rate, failure trends, slowest tests, which tests fail most in CI. Finds systemic test quality issues that per-run reports miss." },
+  { q: "How does attaching a trace URL to a test failure report help on-call engineers?", a: "A trace URL jumps directly to the distributed trace for that request in the APM tool — showing which service, which DB query, which API call was slow or errored. Saves 5-15 minutes of log triage per incident." }
+]} />

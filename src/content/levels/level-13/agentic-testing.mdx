@@ -1,0 +1,162 @@
+---
+title: "Agentic Testing"
+level: 13
+order: 4
+description: "Use AI agents — Claude Code, OpenAI Agents SDK, Cursor — to autonomously write, run, and fix tests."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## What Is Agentic Testing?
+
+Traditional AI assistance: you prompt, AI responds, you act.
+
+**Agentic testing**: the AI takes a goal, plans steps, uses tools (file read/write, shell commands, browser), executes, observes results, and iterates — with minimal human intervention.
+
+```
+Goal: "Write e2e tests for the checkout flow"
+
+Agent loop:
+1. Read existing test structure           (filesystem tool)
+2. Navigate the app                       (browser tool)
+3. Inspect DOM / accessibility tree       (browser_snapshot)
+4. Write test file                        (write file tool)
+5. Run test                              (shell: npx playwright test)
+6. Read failure output                   (stdout)
+7. Fix selector mismatch                 (edit file tool)
+8. Re-run → green                        (shell)
+9. Open PR                               (git tool)
+```
+
+## Claude Code for Test Automation
+
+Claude Code is a CLI AI agent with file system access, shell execution, and MCP server support. It can autonomously implement test plans.
+
+```bash
+# Install
+npm install -g @anthropic-ai/claude-code
+
+# Run in your test project
+cd e2e-tests/
+claude
+
+# Prompt examples:
+# "Write Playwright tests for all API endpoints in src/routes/"
+# "Fix all failing tests — run them first to see what's broken"
+# "Add authentication fixtures to reduce test setup duplication"
+```
+
+**What Claude Code does automatically:**
+- Reads your existing test files for patterns
+- Runs the test suite and reads failures
+- Edits files and re-runs until tests pass
+- Commits with descriptive messages
+
+## OpenAI Agents SDK
+
+```ts
+import { Agent, tool } from '@openai/agents';
+import { z } from 'zod';
+import { execSync } from 'child_process';
+import { readFileSync, writeFileSync } from 'fs';
+
+const runTests = tool({
+  name: 'run_playwright_tests',
+  description: 'Run Playwright tests and return results',
+  parameters: z.object({
+    testFile: z.string().optional(),
+    grep: z.string().optional(),
+  }),
+  execute: async ({ testFile, grep }) => {
+    const cmd = ['npx', 'playwright', 'test'];
+    if (testFile) cmd.push(testFile);
+    if (grep) cmd.push('--grep', grep);
+    try {
+      return execSync(cmd.join(' '), { encoding: 'utf8' });
+    } catch (err: any) {
+      return err.stdout + err.stderr;
+    }
+  },
+});
+
+const testEngineerAgent = new Agent({
+  name: 'TestEngineer',
+  instructions: `You are a senior test engineer. When asked to write tests:
+    1. Read the existing test structure first
+    2. Write tests following established patterns
+    3. Run tests and fix any failures
+    4. Ensure all tests pass before finishing`,
+  tools: [runTests, readFileTool, writeFileTool],
+  model: 'gpt-4o',
+});
+
+const result = await testEngineerAgent.run(
+  'Write Playwright tests for the login page at src/pages/login.tsx'
+);
+```
+
+## Cursor and Windsurf
+
+IDE-native AI agents that understand your codebase:
+
+```
+Cursor (composer mode):
+  @codebase "Write tests for the UserProfile component"
+  → Reads component code
+  → Reads existing test patterns  
+  → Generates matching test file
+  → Runs tests via terminal integration
+
+Windsurf (cascade mode):
+  Similar: multi-file edits, test execution, iterative fixing
+```
+
+**Strengths of IDE agents:**
+- Full codebase context (not just the files you show)
+- Live terminal integration (run and observe)
+- Diff preview before applying changes
+- Works with existing project config (playwright.config.ts)
+
+## Agentic Testing Guardrails
+
+Agents need constraints — unbounded agents write untestable tests:
+
+```ts
+// CLAUDE.md — agent instructions for this project
+// Test writing rules:
+// - Use getByRole over CSS selectors
+// - No waitForTimeout — use waitFor* assertions
+// - storageKey must be unique: run grep before adding QuizCard
+// - All tests must pass before committing
+// - Run npm run build after adding MDX files
+```
+
+```json
+// .claudeignore or .cursorignore
+// Prevent agents from touching:
+dist/
+node_modules/
+.env
+playwright/.auth/
+```
+
+## Human-in-the-Loop vs Fully Autonomous
+
+| Mode | Description | Use when |
+|---|---|---|
+| **Supervised** | Agent proposes, human approves each action | High-stakes code, production systems |
+| **Semi-autonomous** | Agent runs, human reviews diff before commit | Standard development |
+| **Fully autonomous** | Agent writes, tests, and commits | Well-defined, isolated tasks |
+
+Most production use today is semi-autonomous: agent does the work, engineer reviews the diff.
+
+<QuizCard client:only="react" storageKey="ai-agentic" questions={[
+  { q: "What makes agentic testing different from AI code completion (e.g., GitHub Copilot)?", a: "Agents operate in a loop: plan → act → observe → adjust. They call tools (run tests, read files, edit code, use browser), observe results, and iterate until the goal is achieved. Copilot suggests the next line; an agent autonomously completes a task." },
+  { q: "What is a CLAUDE.md file and how does it constrain an agentic test writer?", a: "A project-level instruction file read by Claude Code at startup. Defines rules like 'use getByRole, no waitForTimeout, run build after MDX changes'. Constrains the agent to project conventions without repeating instructions in every prompt." },
+  { q: "What are the risks of fully autonomous agents writing and committing tests without human review?", a: "Tests that pass but don't actually verify meaningful behaviour (vacuous assertions), tests that mask bugs, missing edge cases, introduced secrets in test code, breaking changes to shared fixtures. Semi-autonomous (agent proposes, human reviews diff) mitigates these." },
+  { q: "How does an agentic loop handle a test that fails after the agent's first implementation attempt?", a: "The agent reads the failure output (stdout/stderr from test runner), identifies the error (wrong selector, missing assertion, incorrect fixture), edits the file, re-runs the test, and iterates until green or escalates if stuck after N attempts." }
+]} />

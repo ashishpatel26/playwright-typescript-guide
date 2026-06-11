@@ -1,0 +1,169 @@
+---
+title: "Automation Strategy"
+level: 14
+order: 3
+description: "Articulate ROI, test pyramid trade-offs, coverage decisions, and shift-left strategy — the business-level questions that separate engineers from leads."
+duration: "40 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## The Strategy Interview
+
+Automation strategy questions test whether you can connect technical decisions to business outcomes. They're common in staff/lead roles and in companies building or rebuilding their QA function.
+
+Key themes:
+- Where to invest automation effort for maximum ROI
+- How to justify automation costs to non-technical stakeholders
+- How to decide what NOT to automate
+- How to build a sustainable test strategy across a fast-moving team
+
+## ROI of Automation
+
+### The Break-Even Calculation
+
+```
+Manual test time per run:      20 minutes
+Automation investment:         8 hours (write + review + CI setup)
+Break-even:                    8h ÷ (20min ÷ 60) = 24 runs
+
+If the test runs 3× per week:  break-even in 8 weeks
+Beyond break-even:             pure time savings + consistent execution
+```
+
+**What to tell interviewers:** "I prioritise automating tests that run frequently, take long manually, and are high-risk if missed. One-off exploratory scenarios and tests with unstable UIs are poor automation candidates."
+
+### What NOT to Automate
+
+| Scenario | Why to skip automation |
+|---|---|
+| Feature under active design churn | Selectors/flows change weekly — maintenance cost > value |
+| One-time data migration validation | Runs once; manual spot-check is faster |
+| Highly exploratory/session-based testing | Human intuition needed; no repeatable script |
+| Captchas / 3rd-party auth flows | Cannot reliably automate external flows |
+| Visual design review | Subjective; better served by visual review tools |
+
+## Test Pyramid Strategy
+
+### When to Favour Each Layer
+
+```
+Unit tests:      fast, cheap, test pure logic
+                 Best for: algorithms, utilities, business rules, edge cases
+                 ROI: highest per-test (milliseconds, no infra)
+
+Integration:     test component boundaries (API, DB, service)
+                 Best for: API contracts, auth flows, DB queries
+                 ROI: medium — slower than unit, cheaper than e2e
+
+E2E (UI):        test complete user journeys
+                 Best for: critical paths, cross-service flows, regression gates
+                 ROI: high value, highest maintenance cost
+
+Ratio guideline: 70% unit : 20% integration : 10% e2e
+(adjust based on app type — API-heavy apps skew toward integration)
+```
+
+### When to Break the Pyramid
+
+```
+Monolith with no unit test culture → start with e2e to prove value,
+  then refactor to push coverage down to unit level over 6-12 months.
+
+Microservices → contract tests (Pact) as integration layer;
+  e2e only for critical cross-service journeys.
+
+Legacy codebase with no tests → characterisation tests first
+  (capture current behaviour), then refactor safely.
+```
+
+## Shift-Left Strategy
+
+### Definition and Benefits
+
+```
+Shift-left: move testing activities earlier in the development lifecycle
+
+Traditional:    Design → Dev → QA → Release
+Shift-left:     Design → [QA reviews spec] → Dev+Test → [CI gates] → Release
+
+Benefits:
+- Bugs found in design cost 10-100× less to fix than in production
+- Developers write better code when tests are their responsibility
+- QA becomes a quality advocate, not a gatekeeper
+```
+
+### Practical Implementation
+
+```
+Sprint workflow:
+1. Story creation:   QA reviews acceptance criteria, adds test cases to ticket
+2. Development:      Dev writes unit + integration tests as part of story
+3. PR review:        Automated gates + QA reviews e2e coverage
+4. Sprint demo:      Smoke test confirms demo-ready state
+5. Release:          Regression suite as final gate
+```
+
+## Coverage Strategy
+
+### What Coverage Means for E2E
+
+```ts
+// Coverage ≠ line coverage for e2e tests
+// E2E coverage = user journey coverage
+
+// Map critical user journeys (CUJs):
+const CRITICAL_JOURNEYS = [
+  'new user registers and activates account',
+  'existing user logs in and purchases product',
+  'user resets forgotten password',
+  'admin creates and publishes new listing',
+];
+
+// Each CUJ should have at least one e2e test
+// Coverage gap = unmapped CUJ
+```
+
+### Coverage vs Maintenance Trade-Off
+
+```
+More coverage:  + catches more bugs
+                - higher maintenance burden
+                - slower CI
+
+Less coverage:  + fast CI, low maintenance
+                - production bugs reach users
+
+Target: cover ALL critical user journeys, selective coverage of
+        common alternative paths, no coverage of every edge case
+        (edge cases → unit tests)
+```
+
+## Communicating Strategy to Stakeholders
+
+**Non-technical stakeholders want to know:**
+- "How confident are we that this release won't break production?"
+- "How quickly will we catch a bug if it's introduced?"
+- "What is the cost of the testing programme?"
+
+**Translate technical metrics:**
+```
+"Our smoke suite covers the 8 most critical user journeys.
+It runs in 4 minutes on every commit.
+Our regression suite covers 340 user flows and runs in 18 minutes per PR.
+Last quarter: 23 production bugs prevented, 0 critical path regressions shipped."
+```
+
+<QuizCard client:only="react" storageKey="iv-strategy" questions={[
+  { q: "How do you prioritise which tests to write first on a greenfield project?", a: "Start with the highest-value, highest-risk user journeys — typically the ones that directly generate revenue or block user access (login, checkout, sign-up). Write smoke tests for these first. Then expand to regression coverage of the most-used paths. Unit tests for complex business logic in parallel.", senior: true },
+  { q: "What is the test pyramid and why does it recommend fewer E2E tests than unit tests?", a: "The pyramid (70% unit / 20% integration / 10% e2e) reflects maintenance cost and speed. E2E tests are expensive: slow to run, brittle to selector changes, hard to debug. Unit tests are cheap: millisecond execution, isolated, easy to maintain. High unit coverage with targeted e2e for critical journeys gives the best risk/cost ratio." },
+  { q: "A product manager asks: 'Why do we need automation if manual QA catches bugs?' How do you respond?", a: "Automation catches regressions — the same bug re-appearing after a fix. Manual QA finds new bugs in new features. Automation runs on every commit at 3am; manual QA doesn't. The ROI case: a 20-minute manual regression suite run 3× per week = 4.5 hours/week. Automated: 10 minutes, zero human time, consistent." },
+  { q: "When is it appropriate NOT to automate a test?", a: "When the feature is under active design churn (maintenance cost exceeds value), when it runs only once (one-time data migration), when human judgement is essential (exploratory testing, visual design review), or when the scenario is technically unautomatable (live captchas, external OAuth flows).", senior: true },
+  { q: "What is shift-left testing and what is the main cultural challenge in adopting it?", a: "Shift-left moves testing earlier — QA reviews specs, devs write tests as part of stories, gates catch issues in CI before QA ever sees the build. Main cultural challenge: developers need to own test quality, not treat testing as someone else's job. Requires coaching, pairing, and redefining 'done' to include passing tests." },
+  { q: "How do you measure whether your automation investment is paying off?", a: "Track: bugs caught by automation before reaching production, time saved vs manual execution, mean time to detect regressions (MTTD), false positive rate (flaky tests), coverage of critical user journeys. Quarterly review: are production incidents decreasing? Are regression cycles shrinking?", senior: true },
+  { q: "Your team has 200 E2E tests and the suite takes 40 minutes. How do you decide which tests to delete vs. keep vs. move to a different layer?", a: "Audit each test: does it test logic better covered by a unit test? (move/delete) Is it a one-time scenario that hasn't caught a bug in 6 months? (delete) Is it a critical user journey? (keep, potentially shard). Target: keep only tests that cover risk unit/integration tests cannot cover. Shrink to 60-80 high-value e2e tests, move the rest down the pyramid." },
+  { q: "How do you handle test coverage for a microservices architecture?", a: "Contract tests (Pact) verify service-to-service API compatibility without running all services. Unit tests per service for business logic. E2E only for critical cross-service journeys (e.g., order flow touching cart → payment → inventory). Avoids the 'run everything for every change' anti-pattern that makes CI slow." }
+]} />

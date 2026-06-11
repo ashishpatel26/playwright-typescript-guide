@@ -1,0 +1,131 @@
+---
+title: "The Three Pillars of Observability"
+level: 12
+order: 1
+description: "Understand logs, metrics, and traces — and how test engineers use them to debug production failures."
+duration: "30 min"
+status: complete
+widgets:
+  - diagram
+  - quiz
+---
+
+import MermaidDiagram from '../../../components/react/MermaidDiagram';
+import QuizCard from '../../../components/react/QuizCard';
+
+## The Three Pillars
+
+<MermaidDiagram client:only="react" chart={`flowchart LR\n  subgraph Logs\n    L1["Timestamped events<br/>ERROR: payment failed<br/>INFO: user logged in"]\n  end\n  subgraph Metrics\n    M1["Numeric measurements<br/>p95 latency: 340ms<br/>error_rate: 0.02%"]\n  end\n  subgraph Traces\n    T1["Distributed call chains<br/>API → DB → Cache<br/>with timing per hop"]\n  end\n  L1 --> D["Debug &<br/>Root Cause"]\n  M1 --> D\n  T1 --> D\n  style L1 stroke:#6BB5FF\n  style M1 stroke:#7EE787\n  style T1 stroke:#FFB454`} />
+
+## Logs
+
+Logs are timestamped, structured records of discrete events.
+
+```json
+// Structured log (JSON)
+{
+  "timestamp": "2024-01-15T14:32:01.234Z",
+  "level": "ERROR",
+  "service": "checkout-api",
+  "traceId": "abc-123",
+  "message": "Payment processing failed",
+  "userId": "user-456",
+  "orderId": "order-789",
+  "error": "Card declined: insufficient funds",
+  "duration_ms": 1203
+}
+```
+
+**Log levels:**
+- `DEBUG` — verbose, development only
+- `INFO` — normal operations
+- `WARN` — degraded but operational
+- `ERROR` — failed operation, investigation needed
+- `FATAL` — service cannot continue
+
+## Metrics
+
+Metrics are numeric measurements aggregated over time.
+
+| Metric type | Example | Use |
+|---|---|---|
+| **Counter** | `requests_total` | Total count (monotonically increasing) |
+| **Gauge** | `active_connections` | Current value (can go up/down) |
+| **Histogram** | `request_duration_seconds` | Distribution (p50, p95, p99) |
+| **Summary** | `response_size_bytes` | Pre-calculated percentiles |
+
+**The RED method for services:**
+- **R**ate — requests per second
+- **E**rrors — error rate
+- **D**uration — latency distribution
+
+## Traces
+
+A trace represents a complete request across multiple services:
+
+```
+Trace: user-checkout-flow (traceId: abc-123)
+├── [0ms]    POST /api/checkout        (12ms total)
+│   ├── [1ms]  DB: SELECT cart          (3ms)
+│   ├── [4ms]  API: validate inventory  (5ms — external)
+│   └── [9ms]  DB: INSERT order         (2ms)
+└── [12ms]  → Response: 201 Created
+```
+
+Each step is a **span** with start time, duration, and metadata.
+
+## Using Observability in Test Investigation
+
+```ts
+test('payment failure produces structured log with correct fields', async ({ request }) => {
+  // Trigger a payment failure
+  const res = await request.post('/api/checkout', {
+    data: { cardNumber: '4000000000000002', amount: 100 },  // test card that declines
+  });
+  expect(res.status()).toBe(402);
+
+  // Assert the log was written (via log API or test helper)
+  const logs = await getRecentLogs({ service: 'checkout-api', level: 'ERROR' });
+  const paymentLog = logs.find(l => l.message.includes('Payment processing failed'));
+  expect(paymentLog).toBeDefined();
+  expect(paymentLog.userId).toBeDefined();     // PII context logged
+  expect(paymentLog.traceId).toBeDefined();    // correlatable with traces
+  expect(paymentLog.duration_ms).toBeDefined(); // latency captured
+});
+```
+
+## Correlation: Logs + Traces
+
+```ts
+test('failed request trace correlates with error log', async ({ request }) => {
+  // Force an error
+  const res = await request.post('/api/orders/invalid-id/process');
+  expect(res.status()).toBe(400);
+
+  // Both log and trace should share the same traceId
+  const traceId = res.headers()['x-trace-id'];
+  expect(traceId).toBeDefined();
+
+  const log = await getLogByTraceId(traceId);
+  expect(log.level).toBe('ERROR');
+  expect(log.traceId).toBe(traceId);
+});
+```
+
+## SLI, SLO, SLA — Revisited with Observability
+
+```
+SLI: p95 latency measured by metrics system = 342 ms
+SLO: p95 must be < 500 ms (internal target)
+SLA: p99 < 1 s (contractual — violation triggers penalty)
+
+Observability pipeline:
+Metrics → Grafana dashboard → Alert → PagerDuty → On-call engineer
+```
+
+<QuizCard client:only="react" storageKey="obs-pillars" questions={[
+  { q: "What are the three pillars of observability?", a: "Logs (discrete events with context), Metrics (numeric aggregates over time), Traces (distributed call chains across services). Together they enable root-cause analysis of production failures." },
+  { q: "What is a trace span and what information does it contain?", a: "A span represents a single unit of work within a trace — e.g., one DB query or one API call. Contains: operation name, start time, duration, service name, parent span ID, and custom attributes." },
+  { q: "What does the RED method stand for and when is it used?", a: "Rate (requests/sec), Errors (error rate), Duration (latency percentiles). Use RED to characterise service health at a glance — a dashboard with these three metrics covers most production SLO monitoring." },
+  { q: "Why should every log entry include a `traceId`?", a: "Enables correlation across pillars: a single `traceId` links the log entry, the distributed trace, and any metrics spike to the same request. Without it, you can't connect a 500 error in logs to the slow DB call in traces." }
+]} />

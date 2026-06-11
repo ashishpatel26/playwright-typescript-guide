@@ -1,0 +1,152 @@
+---
+title: "Playwright MCP"
+level: 13
+order: 3
+description: "Use the official Playwright MCP server to give AI agents direct browser control for test generation and debugging."
+duration: "35 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## What Is Playwright MCP?
+
+Playwright MCP (`@playwright/mcp`) is an official MCP server from Microsoft that exposes Playwright browser control as MCP tools. An LLM (Claude, GPT-4) can navigate websites, click elements, fill forms, and take screenshots — all via tool calls.
+
+## Installation & Configuration
+
+```bash
+# Install
+npm install -D @playwright/mcp
+
+# Or use via npx (no install)
+npx @playwright/mcp@latest
+```
+
+```json
+// .claude/settings.json — add to Claude Code
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest", "--headless"],
+      "env": {}
+    }
+  }
+}
+```
+
+## Available Tools
+
+Playwright MCP exposes these tool groups:
+
+| Group | Tools |
+|---|---|
+| **Navigation** | `browser_navigate`, `browser_go_back`, `browser_go_forward` |
+| **Interaction** | `browser_click`, `browser_fill`, `browser_press_key`, `browser_select_option` |
+| **Observation** | `browser_screenshot`, `browser_get_text`, `browser_snapshot` |
+| **Tab management** | `browser_new_tab`, `browser_close_tab`, `browser_list_tabs` |
+| **Network** | `browser_network_requests`, `browser_set_extra_headers` |
+| **Storage** | `browser_storage_state` |
+
+## AI-Assisted Test Generation Workflow
+
+With Playwright MCP, Claude can:
+
+1. **Navigate** the app under test
+2. **Inspect** the DOM via `browser_snapshot` (accessibility tree)
+3. **Generate** accurate test code with real selectors
+4. **Verify** the test by running it
+
+Example Claude Code prompt:
+```
+Navigate to http://localhost:3000/login, fill in the credentials,
+click submit, and generate a Playwright test for the login flow.
+Use role-based selectors from the accessibility tree.
+```
+
+## Snapshot-Based Selector Extraction
+
+```
+# Claude uses browser_snapshot to get the accessibility tree:
+browser_snapshot() →
+  role=heading level=1 name="Sign In"
+  role=textbox name="Email"
+  role=textbox name="Password"
+  role=button name="Sign In"
+  role=link name="Forgot password?"
+
+# Claude generates from this snapshot:
+await page.getByRole('textbox', { name: 'Email' }).fill(email);
+await page.getByRole('textbox', { name: 'Password' }).fill(password);
+await page.getByRole('button', { name: 'Sign In' }).click();
+```
+
+This produces semantic, stable selectors — not CSS or XPath.
+
+## Practical Example: Generate Login Test
+
+```ts
+// Claude generates this from Playwright MCP inspection:
+import { test, expect } from '@playwright/test';
+
+test('user can log in with valid credentials', async ({ page }) => {
+  await page.goto('/login');
+
+  await page.getByRole('textbox', { name: 'Email' }).fill('user@example.com');
+  await page.getByRole('textbox', { name: 'Password' }).fill('password123');
+  await page.getByRole('button', { name: 'Sign In' }).click();
+
+  await expect(page).toHaveURL(/dashboard/);
+  await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible();
+});
+```
+
+Compared to raw codegen output (CSS selectors, no assertions) — MCP output is production-quality.
+
+## Debugging Failing Tests with Playwright MCP
+
+```
+User: "This test is failing — can you debug it?"
+[shares test file]
+
+Claude:
+1. browser_navigate(url) — visits the page
+2. browser_snapshot() — inspects accessibility tree
+3. Finds: button text changed from "Submit" to "Place Order"
+4. Updates: page.getByRole('button', { name: 'Place Order' })
+5. browser_screenshot() — confirms fix
+```
+
+## Visual Regression with Screenshots
+
+```ts
+// Claude takes screenshot for visual comparison
+// browser_screenshot() → base64 PNG
+
+test('product page visual check via MCP', async ({ page }) => {
+  await page.goto('/products/widget-pro');
+  // Take screenshot via standard Playwright (same as MCP internally)
+  await expect(page).toHaveScreenshot('widget-pro.png', { maxDiffPixels: 100 });
+});
+```
+
+## Playwright MCP vs Direct Playwright
+
+| | Playwright MCP | Direct Playwright test |
+|---|---|---|
+| Who controls browser | AI agent via tool calls | TypeScript code |
+| Use case | Exploration, generation, debugging | CI test execution |
+| Reproducibility | Ad-hoc | Deterministic |
+| Output | Generated test code | Test results |
+
+Use MCP for **creating and debugging** tests. Use direct Playwright for **running** tests in CI.
+
+<QuizCard client:only="react" storageKey="ai-pw-mcp" questions={[
+  { q: "What is the main advantage of using Playwright MCP for test generation over `playwright codegen`?", a: "MCP gives the AI the accessibility tree snapshot (semantic roles and labels) not just recorded click coordinates. The AI generates `getByRole` / `getByLabel` selectors that are stable — codegen often produces brittle CSS or text selectors." },
+  { q: "What does `browser_snapshot` return and why is it better than a screenshot for test generation?", a: "Returns the page's accessibility tree — a structured description of all interactive elements with their roles and labels. An LLM can read it as structured data to generate accurate selectors. A screenshot is a pixel image the LLM can describe but can't extract exact selector strings from." },
+  { q: "When should you use Playwright MCP vs running Playwright tests directly?", a: "MCP for exploration, generation, and debugging — AI-driven interactive sessions. Direct Playwright for CI test execution — deterministic, version-controlled, reproducible. MCP output is generated test code that then runs via direct Playwright." },
+  { q: "How does Playwright MCP help diagnose a failing test without the engineer reading every element in the DOM manually?", a: "The AI calls `browser_snapshot` to get the current accessibility tree, compares it with the test's locators, and identifies mismatches. A changed button label or missing element is immediately visible in the snapshot diff." }
+]} />

@@ -1,0 +1,184 @@
+---
+title: "Root Cause Analysis"
+level: 12
+order: 4
+description: "Apply structured root cause analysis to production failures using observability data."
+duration: "35 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## RCA Overview
+
+Root Cause Analysis (RCA) finds the underlying cause of an incident — not just the symptom. Test engineers contribute to RCA by:
+- Writing regression tests that prevent recurrence
+- Analysing test gaps that missed the bug
+- Verifying fixes with automated tests
+
+## The 5 Whys
+
+Structured iterative questioning:
+
+```
+Incident: Checkout failing for 15% of users
+
+Why 1: Why is checkout failing?
+  → Payment service returning 503
+
+Why 2: Why is payment service returning 503?
+  → All DB connections exhausted
+
+Why 3: Why are DB connections exhausted?
+  → Connection pool not released after timeout
+
+Why 4: Why is the pool not released?
+  → Missing `finally { conn.release() }` in error path
+
+Why 5: Why was this not caught in testing?
+  → No test for partial payment failure + timeout scenario
+
+Root cause: Error handling path skips connection release
+Fix: Add `finally` block + add test for timeout error path
+```
+
+## RCA Investigation Workflow
+
+```
+1. Detect     → Alert fires (Prometheus/Datadog)
+               ↓
+2. Scope      → Which users? Which region? Since when?
+               ↓
+3. Correlate  → Metrics spike? Deploy at same time? Config change?
+               ↓
+4. Trace      → Find a failing request trace (traceId)
+               ↓
+5. Logs       → Filter logs by traceId — find error + context
+               ↓
+6. Reproduce  → Write a failing test that reproduces the issue
+               ↓
+7. Fix        → Implement fix — test goes green
+               ↓
+8. Post-mortem → Document timeline, root cause, prevention
+```
+
+## Using Playwright to Reproduce Production Bugs
+
+```ts
+// RCA step 6: write a reproducing test from the incident
+// Incident: users with expired trial accounts could complete checkout
+
+test('RCA-2024-001: expired trial users are blocked at checkout', async ({ page, request }) => {
+  // Setup: create user with expired trial
+  const user = await request.post('/api/test/users', {
+    data: { email: 'trial@test.com', trialExpiredAt: '2023-01-01' },
+  });
+  const { id: userId } = await user.json();
+
+  // Reproduce: attempt checkout as expired trial user
+  await loginAs(page, 'trial@test.com');
+  await page.goto('/checkout');
+  await page.fill('[name=card]', '4242424242424242');
+  await page.click('[type=submit]');
+
+  // Assert: should be blocked
+  await expect(page.getByText('Your trial has expired')).toBeVisible();
+  await expect(page).not.toHaveURL(/confirmation/);
+
+  // Cleanup
+  await request.delete(`/api/test/users/${userId}`);
+});
+```
+
+## Metrics-Driven Test Creation
+
+When a metric alert fires, create a test that validates the SLO:
+
+```ts
+// Alert: p95 checkout latency > 2s. Add a test to catch regressions.
+test('checkout p95 latency is within SLO', async ({ page }) => {
+  const timings: number[] = [];
+
+  for (let i = 0; i < 20; i++) {
+    const start = Date.now();
+    await page.goto('/checkout');
+    await page.fill('[name=card]', '4242424242424242');
+    await page.click('[type=submit]');
+    await page.waitForURL(/confirmation/);
+    timings.push(Date.now() - start);
+    await page.goto('/');
+  }
+
+  timings.sort((a, b) => a - b);
+  const p95 = timings[Math.floor(timings.length * 0.95)];
+  expect(p95).toBeLessThan(2000);  // SLO: p95 < 2 seconds
+});
+```
+
+## Post-Mortem Template
+
+```markdown
+## Incident: [Title]
+
+**Date:** 2024-01-15
+**Duration:** 14:20–15:45 UTC (85 minutes)
+**Impact:** 15% of checkout requests failed
+
+### Timeline
+- 14:20 — Alert: error_rate > 5%
+- 14:25 — On-call engineer acknowledges
+- 14:40 — Root cause identified: missing finally block
+- 15:30 — Fix deployed
+- 15:45 — Error rate returns to baseline
+
+### Root Cause
+Connection pool exhaustion in payment service error path.
+Missing `finally { conn.release() }` in timeout handler.
+
+### Contributing Factors
+- No test for timeout error path
+- Connection pool size not monitored
+
+### Action Items
+- [ ] Add regression test for payment timeout path
+- [ ] Add connection pool utilisation metric + alert
+- [ ] Code review checklist: verify try/finally on DB connections
+```
+
+## Test Gap Analysis
+
+After each incident, assess the test gaps:
+
+```ts
+// Missing test matrix for the incident:
+// ✅ Happy path: successful payment
+// ✅ Invalid card: declined
+// ❌ MISSING: payment service timeout
+// ❌ MISSING: connection pool exhaustion simulation
+// ❌ MISSING: retry after transient failure
+
+// Add the missing tests after the incident
+test('checkout retries once on payment service timeout', async ({ page }) => {
+  await page.route('**/api/payment', async (route) => {
+    const callCount = (route as any)._callCount ?? 0;
+    (route as any)._callCount = callCount + 1;
+    if (callCount === 0) {
+      await new Promise(r => setTimeout(r, 5000));  // first call: timeout
+    }
+    await route.continue();  // second call: proceed
+  });
+
+  await page.goto('/checkout');
+  await page.click('[type=submit]');
+  await expect(page.getByText('Order confirmed')).toBeVisible({ timeout: 15000 });
+});
+```
+
+<QuizCard client:only="react" storageKey="obs-rca" questions={[
+  { q: "What is the purpose of the 5 Whys technique in RCA?", a: "Iteratively asks 'why' to move from symptom to root cause. Stops when you reach a process, code, or test gap that could be fixed to prevent recurrence. Avoids stopping at symptoms like 'server was down'." },
+  { q: "What should a test engineer produce as their contribution to an incident post-mortem?", a: "A regression test that reproduces the bug and goes red before the fix, green after. Also a test gap analysis identifying which scenarios were missing from the suite and why the existing tests didn't catch it." },
+  { q: "How do you use `page.route()` to reproduce a timeout-related production bug in a Playwright test?", a: "Route the failing API endpoint and add a delay (`setTimeout`) on the first call to simulate the timeout, then continue normally on subsequent calls. This reproduces the transient failure without needing a real slow service." },
+  { q: "Why is 'the server was down' not a root cause in the 5 Whys?", a: "It describes the symptom, not the cause. Asking 'why was the server down?' leads to the actual issue (memory leak, bad deploy, misconfiguration). RCA stops when you find something actionable that, if fixed, prevents recurrence." }
+]} />

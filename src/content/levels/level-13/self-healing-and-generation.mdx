@@ -1,0 +1,186 @@
+---
+title: "Self-Healing Tests & AI Generation"
+level: 13
+order: 5
+description: "Auto-fix broken selectors with Healenium, generate tests with LLMs, and build a sustainable AI-assisted test maintenance workflow."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Why Tests Break
+
+Most test failures are not logic bugs — they're selector failures. A developer renames a class, restructures a form, or refactors a component and dozens of tests break without any functional change.
+
+```
+Common causes of test rot:
+- Class/ID rename                  → selector no longer matches
+- Component restructure            → DOM path changed
+- Feature flag A/B test            → two valid DOMs, test assumes one
+- Localisation change              → text-based selectors fail
+- Design system upgrade            → role/label text changed
+```
+
+The traditional fix: manual selector hunts. AI-assisted approaches automate this.
+
+## Healenium — Automatic Selector Repair
+
+Healenium wraps your WebDriver or Playwright session and uses ML to find the "closest" element when a selector fails.
+
+```ts
+// Setup: add Healenium proxy (Java/Spring backend, but TS client works)
+// docker-compose.yml for Healenium backend:
+// services:
+//   healenium:
+//     image: healenium/hlm-backend:latest
+//     ports: ["7878:7878"]
+
+// TS: use the healenium playwright adapter
+import { chromium } from '@playwright/test';
+import { HealeniumPlaywright } from 'healenium-playwright';
+
+const browser = await chromium.launch();
+const context = await browser.newContext();
+const page = await HealeniumPlaywright.create(context);
+
+// If '#submit-btn' doesn't exist, Healenium locates the closest match
+// and logs the suggested selector for code update
+await page.click('#submit-btn');
+```
+
+**What Healenium does:**
+1. Test fails on selector
+2. Healenium scores all DOM elements against the last-known HTML
+3. Picks highest-similarity match, clicks it
+4. Reports the new selector so you can update the test
+
+**Limitations:** Works for element existence/click failures. Cannot fix assertion failures caused by changed content or business logic.
+
+## Self-Healing Patterns in Pure Playwright
+
+Without external tools, build resilience in:
+
+```ts
+// Pattern 1: Attribute priority fallback
+async function findButton(page: Page, label: string) {
+  // Try stable attributes first, fall back to text
+  return (
+    page.getByTestId(`btn-${label.toLowerCase()}`) ||
+    page.getByRole('button', { name: label }) ||
+    page.locator(`button:has-text("${label}")`)
+  );
+}
+
+// Pattern 2: Multiple selector fallback fixture
+async function robustClick(page: Page, selectors: string[]) {
+  for (const sel of selectors) {
+    const el = page.locator(sel);
+    if (await el.count() > 0) {
+      await el.first().click();
+      return;
+    }
+  }
+  throw new Error(`None of selectors found: ${selectors.join(', ')}`);
+}
+
+// Pattern 3: data-testid as contract
+// Agree with devs: data-testid NEVER changes without a test update PR
+// All other selectors are implementation detail
+```
+
+## LLM Test Generation
+
+### From Page Description
+
+```ts
+// CLI workflow using Claude Code or similar:
+// claude "Look at src/pages/checkout.tsx and write Playwright tests 
+//         for the payment form. Follow patterns in e2e/auth.spec.ts."
+
+// Agent will:
+// 1. Read checkout.tsx for form fields, validation, routes
+// 2. Read auth.spec.ts for fixture/selector patterns
+// 3. Generate checkout.spec.ts matching project style
+// 4. Run tests and fix failures
+```
+
+### From API Response
+
+```ts
+import Anthropic from '@anthropic-ai/sdk';
+
+async function generateTestFromOpenApiSpec(specPath: string): Promise<string> {
+  const spec = await fs.readFile(specPath, 'utf-8');
+  const client = new Anthropic();
+
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 4096,
+    messages: [{
+      role: 'user',
+      content: `Generate Playwright API tests for every endpoint in this OpenAPI spec.
+Use APIRequestContext, group by resource, cover happy path + 400/401/404.
+${spec}`,
+    }],
+  });
+
+  return response.content[0].type === 'text' ? response.content[0].text : '';
+}
+```
+
+### From Test Failure
+
+```bash
+# Paste failing test output + test file into Claude Code
+# "This test is failing — read the output and fix the selector"
+# Claude: reads DOM snapshot from trace, identifies new selector, edits file
+```
+
+## AI Generation Quality Gates
+
+Generated tests need review. A checklist:
+
+```ts
+// ✅ Good generated test
+test('user can complete checkout', async ({ page }) => {
+  await page.getByLabel('Card number').fill('4242424242424242');  // accessible
+  await page.getByRole('button', { name: 'Pay now' }).click();   // semantic
+  await expect(page.getByText('Order confirmed')).toBeVisible(); // meaningful assertion
+});
+
+// ❌ Bad generated test (common AI failure modes)
+test('checkout works', async ({ page }) => {
+  await page.locator('.card-input-3').fill('4242...');           // brittle class
+  await page.locator('#btn-7').click();                          // meaningless ID
+  await expect(page).toHaveURL('/success');                      // URL might redirect
+  await expect(page.locator('body')).toContainText('Order');     // too broad
+});
+```
+
+**Review checklist for AI-generated tests:**
+- Uses `getByRole`/`getByLabel`/`getByTestId` (not `.css-class` or `#id`)
+- Assertions test user-visible outcomes (not internal state)
+- No `waitForTimeout` — only `expect(...).toBeVisible()`
+- `storageKey` unique across site (run grep)
+- `test.describe` groups logically, not by file structure
+
+## Maintenance Loop
+
+```
+Weekly AI-assisted maintenance loop:
+1. Run full test suite → collect failures
+2. For selector failures: run Healenium or use Claude Code to find new selectors
+3. For logic failures: paste failure + relevant app code into Claude Code
+4. Review AI suggestions → merge → re-run
+5. Add generated tests for any uncovered new features
+```
+
+<QuizCard client:only="react" storageKey="ai-self-heal" questions={[
+  { q: "What class of test failures does Healenium address, and what does it NOT fix?", a: "Healenium fixes selector failures — when an element exists but the selector no longer matches. It does NOT fix assertion failures caused by changed business logic, content changes, or missing elements." },
+  { q: "Why is `data-testid` the most resilient selector attribute?", a: "It's a testing contract — agreed between devs and test engineers to never change without a corresponding test update. CSS classes and IDs are implementation details that change for styling/refactoring reasons unrelated to user-facing behaviour." },
+  { q: "What are two common failure modes in AI-generated tests?", a: "1) Brittle selectors — using `.css-class` or `#numeric-id` that break on any DOM refactor. 2) Weak assertions — checking page URL or body text instead of specific user-visible outcomes, leading to tests that pass even when the feature is broken." },
+  { q: "In the Playwright fallback pattern, why check `el.count() > 0` before clicking rather than just trying to click?", a: "Playwright's `click()` throws immediately if no element matches. Checking count first lets you try the next selector in the fallback list without catching exceptions, keeping the logic clean and intent-revealing." }
+]} />

@@ -1,0 +1,180 @@
+---
+title: "Architecture & Scalability"
+level: 14
+order: 2
+description: "Answer senior-level architecture questions about scaling test suites, parallelism, sharding, reporting, and multi-team test ownership."
+duration: "40 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## The Scalability Interview
+
+Senior and lead roles get questions about what happens when a test suite grows from 50 to 5,000 tests. They want to know:
+
+- How do you keep CI feedback loops short?
+- How do you manage test ownership across teams?
+- How do you handle shared infrastructure (DBs, auth, environments)?
+- How do you measure and improve test reliability?
+
+## Execution Scalability
+
+### Parallelism vs Sharding
+
+```ts
+// Parallelism: multiple workers on ONE machine
+// playwright.config.ts
+export default defineConfig({
+  workers: process.env.CI ? 4 : 2,  // 4 CPUs on CI agent
+});
+
+// Sharding: split suite across MULTIPLE machines
+// Machine 1: npx playwright test --shard=1/4
+// Machine 2: npx playwright test --shard=2/4
+// Machine 3: npx playwright test --shard=3/4
+// Machine 4: npx playwright test --shard=4/4
+```
+
+**When to shard:**
+- Suite takes >15 minutes on a single machine
+- CI costs allow multiple parallel agents
+- Tests are independent (no shared mutation)
+
+### Blob Reporter + Merge
+
+```yaml
+# GitHub Actions matrix sharding
+jobs:
+  test:
+    strategy:
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - run: npx playwright test --shard=${{ matrix.shard }}/4 --reporter=blob
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blob-report-${{ matrix.shard }}
+          path: blob-report/
+
+  merge-reports:
+    needs: test
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: all-blob-reports/, pattern: blob-report-* }
+      - run: npx playwright merge-reports --reporter=html ./all-blob-reports
+```
+
+## Test Suite Architecture at Scale
+
+### Layered Test Strategy
+
+```
+Suite layers (each has different run frequency):
+
+Layer 1: Smoke (10-20 tests)      → every commit, <5 min
+Layer 2: Regression (200-500)     → every PR, <20 min (sharded)
+Layer 3: Full suite (1000+)       → nightly, <60 min (sharded)
+Layer 4: Performance/Security     → weekly or release
+```
+
+```ts
+// Tag-based filtering
+test('critical path checkout @smoke @regression', async ({ page }) => { ... });
+test('edge case empty cart @regression', async ({ page }) => { ... });
+
+// playwright.config.ts projects
+projects: [
+  { name: 'smoke', grep: /@smoke/ },
+  { name: 'regression', grep: /@regression/ },
+  { name: 'full', grepInvert: /@skip/ },
+]
+```
+
+### Multi-Team Ownership
+
+```
+Mono-repo with team namespacing:
+e2e/
+├── core/        → platform team owns
+├── payments/    → payments team owns  
+├── catalog/     → catalog team owns
+└── shared/      → shared fixtures, utilities (governance required)
+
+playwright.config.ts: each team has a project config
+payments team PR: only runs e2e/payments/ tests in PR, full suite nightly
+```
+
+## Reliability at Scale
+
+### Flakiness Tracking
+
+```ts
+// Custom reporter: track flaky tests
+class FlakinesReporter implements Reporter {
+  onTestEnd(test: TestCase, result: TestResult) {
+    if (result.status === 'flaky') {
+      // POST to metrics service: test title, file, duration, retry count
+      reportFlakiness({
+        title: test.title,
+        file: test.location.file,
+        retries: result.retry,
+        duration: result.duration,
+      });
+    }
+  }
+}
+```
+
+**Flakiness SLO:** Teams own their test reliability. A test that flakes >5% of runs in 7 days is auto-filed as a P2 bug and quarantined (tagged `@flaky`, excluded from smoke).
+
+### Quarantine Pattern
+
+```ts
+// quarantine.ts — shared list
+export const QUARANTINED = [
+  'checkout > payment > should handle timeout',
+  'catalog > search > should filter by price',
+];
+
+// playwright.config.ts
+grepInvert: new RegExp(QUARANTINED.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'))
+```
+
+## Environment Architecture
+
+```
+Environments:
+- local: developer machine, real services via docker-compose
+- preview: per-PR ephemeral environment (Vercel/Railway preview deploy)
+- staging: shared, seeded weekly, integration test target
+- production: smoke only (never mutate, never create test data)
+```
+
+```ts
+// playwright.config.ts — environment-aware baseURL
+const ENV = process.env.TEST_ENV ?? 'staging';
+const BASE_URLS = {
+  local: 'http://localhost:3000',
+  preview: process.env.PREVIEW_URL!,
+  staging: 'https://staging.example.com',
+  production: 'https://example.com',
+};
+
+export default defineConfig({
+  use: { baseURL: BASE_URLS[ENV] },
+});
+```
+
+<QuizCard client:only="react" storageKey="iv-architecture" questions={[
+  { q: "Your CI suite takes 45 minutes. The team wants it under 15. What's your plan?", a: "1) Profile: identify the 20% of tests that take 80% of time. 2) Shard across 4 CI agents (45÷4 ≈ 11 min). 3) Run only impacted tests on PR (affected file analysis). 4) Run slow tests nightly, not per-PR. 5) Parallelize workers per agent. Sharding + smart filtering usually achieves the target without deleting tests.", senior: true },
+  { q: "What is the blob reporter and why is it used for sharded runs?", a: "The blob reporter writes binary shard results to disk. After all shards finish, `playwright merge-reports` combines them into a single HTML report. Without it, you get N separate HTML reports with no unified view of pass/fail across the whole suite." },
+  { q: "How do you prevent shared test data from causing intermittent failures in a parallel suite?", a: "Each test creates its own data via API fixtures and cleans up after itself. Never read from shared mutable records (e.g., 'user1@test.com' created once and used by all). Use unique IDs (UUID or timestamp) in generated data. For read-only shared data, seed once in global-setup and treat as immutable." },
+  { q: "How do you handle tests that are known flaky but you can't fix immediately?", a: "Quarantine: tag with @flaky, exclude from smoke/PR gate, still run in nightly suite. File a tracked ticket. Set an SLO: quarantined tests must be fixed within 2 sprints or deleted. Never use `test.skip()` without a ticket — skips disappear into the void.", senior: true },
+  { q: "What is the difference between `test` scope and `worker` scope for a Playwright fixture?", a: "`test` scope: fixture is created and torn down for every test. `worker` scope: fixture is created once per worker process and shared across all tests in that worker. Use worker scope for expensive setup safe to share (read-only DB connections, authenticated context for non-mutating tests)." },
+  { q: "How do you structure tests in a mono-repo used by multiple product teams?", a: "Namespace by team directory (e2e/payments/, e2e/catalog/). Each team's PR only gates on their directory. Nightly runs the full suite. Shared fixtures in e2e/shared/ with a CODEOWNERS entry requiring platform team approval. Each team owns their flakiness SLO." },
+  { q: "Your staging environment is shared and other teams' deployments sometimes break your tests. How do you handle this?", a: "1) Tag tests that depend on shared services with @integration. 2) Run @integration only in nightly, not per-PR. 3) Per-PR: use mocked or containerised dependencies. 4) Long term: advocate for preview-per-PR environments so each PR tests against isolated infrastructure.", senior: true },
+  { q: "How would you measure test suite health over time?", a: "Track: pass rate per test (flakiness %), mean time to failure (MTTF), suite duration trend, coverage of critical user journeys, test debt (quarantined/skipped count). Report weekly. Alert when flakiness >5% or duration increases >20% week-over-week." }
+]} />

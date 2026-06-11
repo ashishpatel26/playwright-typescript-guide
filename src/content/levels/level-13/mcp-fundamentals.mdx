@@ -1,0 +1,130 @@
+---
+title: "MCP Fundamentals"
+level: 13
+order: 2
+description: "Understand the Model Context Protocol — how LLMs communicate with tools and external systems."
+duration: "30 min"
+status: complete
+widgets:
+  - diagram
+  - quiz
+---
+
+import MermaidDiagram from '../../../components/react/MermaidDiagram';
+import QuizCard from '../../../components/react/QuizCard';
+
+## What Is MCP?
+
+The **Model Context Protocol** (MCP) is an open standard that lets AI models (like Claude) communicate with external tools, data sources, and environments via a structured JSON-RPC protocol.
+
+Think of MCP as a USB-C standard for AI integrations: instead of every AI tool building custom integrations with every service, MCP provides one universal interface.
+
+## MCP Architecture
+
+<MermaidDiagram client:only="react" chart={`flowchart LR\n  subgraph Host Application\n    C["Claude / LLM"] --> |"tool_call"| MC["MCP Client"]\n    MC --> |"result"| C\n  end\n  subgraph MCP Servers\n    MC --> |"JSON-RPC"| S1["playwright-mcp<br/>browser control"]\n    MC --> |"JSON-RPC"| S2["filesystem-mcp<br/>read/write files"]\n    MC --> |"JSON-RPC"| S3["database-mcp<br/>run SQL queries"]\n    MC --> |"JSON-RPC"| S4["github-mcp<br/>PRs, issues"]\n  end\n  style C stroke:#F05133\n  style S1 stroke:#6BB5FF\n  style S2 stroke:#7EE787\n  style S3 stroke:#FFB454\n  style S4 stroke:#FF6B6B`} />
+
+## MCP Primitives
+
+MCP servers expose three types of primitives:
+
+| Primitive | Description | Example |
+|---|---|---|
+| **Tools** | Functions the LLM can call | `browser_click`, `run_sql`, `git_commit` |
+| **Resources** | Data the LLM can read | File contents, DB schema, API docs |
+| **Prompts** | Reusable prompt templates | "Debug this test failure", "Generate API test" |
+
+## MCP Server Structure
+
+```typescript
+// Simple MCP server (TypeScript)
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+
+const server = new Server(
+  { name: 'my-test-tools', version: '1.0.0' },
+  { capabilities: { tools: {} } }
+);
+
+// Register a tool
+server.setRequestHandler('tools/list', async () => ({
+  tools: [{
+    name: 'run_playwright_test',
+    description: 'Run a specific Playwright test file',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        testFile: { type: 'string', description: 'Path to test file' },
+        grep: { type: 'string', description: 'Test name filter' },
+      },
+      required: ['testFile'],
+    },
+  }],
+}));
+
+server.setRequestHandler('tools/call', async (request) => {
+  if (request.params.name === 'run_playwright_test') {
+    const { testFile, grep } = request.params.arguments as any;
+    const args = ['npx', 'playwright', 'test', testFile];
+    if (grep) args.push('--grep', grep);
+
+    const result = execSync(args.join(' '), { encoding: 'utf8' });
+    return { content: [{ type: 'text', text: result }] };
+  }
+});
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
+```
+
+## Claude Code MCP Configuration
+
+```json
+// ~/.claude/settings.json (or project .claude/settings.json)
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
+      "env": {
+        "PLAYWRIGHT_HEADLESS": "false"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/project"]
+    }
+  }
+}
+```
+
+## Transport Types
+
+| Transport | How it works | Use case |
+|---|---|---|
+| **stdio** | Server reads/writes stdin/stdout | Local tools (most common) |
+| **HTTP + SSE** | HTTP server with Server-Sent Events | Remote/web tools |
+| **WebSocket** | Persistent bidirectional connection | Real-time tools |
+
+## MCP Security Model
+
+- Servers run as separate processes — LLM cannot execute arbitrary code directly
+- Tool calls require explicit user approval in interactive hosts
+- Servers define allowed operations via capability declarations
+- Network access controlled by transport configuration
+
+## Why MCP Matters for Test Automation
+
+MCP enables AI agents to:
+1. **Inspect live apps** — navigate, click, read DOM via Playwright MCP
+2. **Read/write test files** — filesystem MCP for code generation
+3. **Query databases** — database MCP for test data setup
+4. **Interact with CI** — GitHub MCP to open PRs, read test results
+
+Result: an AI that can autonomously write a test, run it, read the failure, fix it, and open a PR — all through standard MCP tool calls.
+
+<QuizCard client:only="react" storageKey="ai-mcp" questions={[
+  { q: "What problem does MCP solve in the AI tooling ecosystem?", a: "Integration fragmentation — every AI tool was building custom integrations with every service. MCP provides one standard protocol (JSON-RPC) so any AI host can talk to any MCP server without custom code." },
+  { q: "What are the three MCP primitives and what does each provide to the LLM?", a: "Tools (callable functions — browser clicks, SQL queries), Resources (readable data — file contents, DB schemas), Prompts (reusable templates — 'debug this failure'). Together they define what an LLM can do and know via an MCP server." },
+  { q: "What transport mechanism do most local MCP servers use and why?", a: "stdio — the server reads from stdin and writes to stdout. Simple, requires no network ports, works everywhere, and the host process manages the lifecycle. HTTP/SSE is used for remote servers or multi-client scenarios." },
+  { q: "How does MCP enable an AI agent to autonomously fix a failing test?", a: "1) Run test via `run_test` tool → see failure. 2) Read test file via filesystem MCP. 3) Navigate the app via Playwright MCP to inspect current DOM. 4) Edit the test file. 5) Re-run test. 6) Open PR via GitHub MCP. Each step is a standard tool call." }
+]} />
