@@ -1,0 +1,227 @@
+---
+title: Interfaces & Classes
+level: 1
+order: 3
+description: TypeScript interfaces, type aliases, and classes — the building blocks of Playwright page objects, fixtures, and typed test data.
+duration: 30 min
+status: complete
+widgets: ['ts-playground', 'quiz']
+---
+
+import TsPlayground from '../../../components/react/TsPlayground';
+import QuizCard from '../../../components/react/QuizCard';
+import Tip from '../../../components/astro/Tip.astro';
+
+## Interfaces
+
+An interface describes the shape of an object:
+
+```ts
+interface User {
+  id: number;
+  username: string;
+  email: string;
+  role: 'admin' | 'customer';
+}
+
+// Optional properties
+interface TestOptions {
+  timeout?: number;      // may be undefined
+  retries?: number;
+  baseURL?: string;
+}
+
+// Readonly properties
+interface Config {
+  readonly baseURL: string;  // cannot be reassigned after creation
+  timeout: number;
+}
+```
+
+## Type aliases vs interfaces
+
+```ts
+// Type alias — can represent any type, including primitives and unions
+type Status = 'pass' | 'fail' | 'skip';
+type ID = string | number;
+type Callback = () => void;
+
+// Interface — describes object shapes; supports declaration merging
+interface PageObject {
+  goto(): Promise<void>;
+  isLoaded(): Promise<boolean>;
+}
+
+// When to use which:
+// - Object shapes in page objects → interface (extensible, familiar)
+// - Union types, primitives, tuples → type alias (interfaces can't)
+// - Either works for simple object types — pick one and be consistent
+```
+
+<Tip>Playwright's own types use interfaces throughout. Follow the same pattern in your page objects for consistency with the library you're using.</Tip>
+
+## Classes
+
+```ts
+class LoginPage {
+  // Constructor shorthand — declares and assigns properties in one go
+  constructor(private readonly page: Page) {}
+
+  async goto(): Promise<void> {
+    await this.page.goto('https://www.saucedemo.com');
+  }
+
+  async signIn(username: string, password: string): Promise<void> {
+    await this.page.getByPlaceholder('Username').fill(username);
+    await this.page.getByPlaceholder('Password').fill(password);
+    await this.page.getByRole('button', { name: 'Login' }).click();
+  }
+
+  async getError(): Promise<string> {
+    return this.page.getByTestId('error').innerText();
+  }
+}
+
+// Usage in a test
+test('login succeeds', async ({ page }) => {
+  const login = new LoginPage(page);
+  await login.goto();
+  await login.signIn('standard_user', 'secret_sauce');
+  await expect(page.getByText('Products')).toBeVisible();
+});
+```
+
+## Access modifiers
+
+```ts
+class BasePage {
+  protected page: Page;          // accessible in this class + subclasses
+  private _isLoaded = false;     // accessible only in this class
+  public url: string;            // accessible anywhere (default)
+  readonly baseURL: string;      // assignable only in constructor
+
+  constructor(page: Page, baseURL: string) {
+    this.page = page;
+    this.url = baseURL;
+    this.baseURL = baseURL;
+  }
+
+  protected async waitForLoad(): Promise<void> {
+    await this.page.waitForLoadState('networkidle');
+    this._isLoaded = true;
+  }
+}
+
+class InventoryPage extends BasePage {
+  async getItemCount(): Promise<number> {
+    await this.waitForLoad(); // OK — protected method in base class
+    return this.page.locator('.inventory_item').count();
+  }
+}
+```
+
+## Interfaces + classes together
+
+```ts
+// Interface defines the contract
+interface ILoginPage {
+  goto(): Promise<void>;
+  signIn(username: string, password: string): Promise<void>;
+  getError(): Promise<string | null>;
+}
+
+// Class implements the contract
+class LoginPage implements ILoginPage {
+  constructor(private page: Page) {}
+
+  async goto(): Promise<void> {
+    await this.page.goto('https://www.saucedemo.com');
+  }
+
+  async signIn(username: string, password: string): Promise<void> {
+    await this.page.getByPlaceholder('Username').fill(username);
+    await this.page.getByPlaceholder('Password').fill(password);
+    await this.page.getByRole('button', { name: 'Login' }).click();
+  }
+
+  async getError(): Promise<string | null> {
+    const el = this.page.getByTestId('error');
+    if (await el.isHidden()) return null;
+    return el.innerText();
+  }
+}
+```
+
+## Try it: interfaces and classes
+
+<TsPlayground
+  client:only="react"
+  label="Interfaces & Classes — Playground"
+  height={380}
+  starter={`// Interfaces and classes demo
+
+interface User {
+  id: number;
+  username: string;
+  role: 'admin' | 'customer';
+}
+
+interface TestResult {
+  testName: string;
+  status: 'pass' | 'fail' | 'skip';
+  durationMs: number;
+}
+
+// Class implementing a simple page object pattern
+class TestSuite {
+  private results: TestResult[] = [];
+
+  addResult(name: string, status: TestResult['status'], ms: number): void {
+    this.results.push({ testName: name, status, durationMs: ms });
+  }
+
+  getSummary(): string {
+    const pass = this.results.filter(r => r.status === 'pass').length;
+    const fail = this.results.filter(r => r.status === 'fail').length;
+    const total = this.results.length;
+    return \`\${pass}/\${total} passed, \${fail} failed\`;
+  }
+
+  getFailures(): TestResult[] {
+    return this.results.filter(r => r.status === 'fail');
+  }
+}
+
+const suite = new TestSuite();
+suite.addResult('login flow', 'pass', 1240);
+suite.addResult('add to cart', 'fail', 890);
+suite.addResult('checkout', 'pass', 2100);
+suite.addResult('search', 'skip', 0);
+
+console.log('Summary:', suite.getSummary());
+console.log('Failures:', suite.getFailures().map(f => f.testName));
+
+const user: User = { id: 1, username: 'standard_user', role: 'customer' };
+console.log('User:', user.username, '(' + user.role + ')');
+`}
+/>
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="ts-interfaces-classes" questions={[
+  {
+    q: "What is the difference between an interface and a type alias in TypeScript?",
+    a: "Interfaces describe object shapes and support declaration merging (multiple interface declarations with the same name are merged). Type aliases can represent any type including primitives, unions, and tuples. For object shapes in Playwright page objects, both work — the community convention is to use interfaces for object shapes that might be extended.",
+    senior: "Declaration merging in interfaces is useful for extending third-party types. For example, you can extend Playwright's PlaywrightTestOptions interface to add your own custom fixture types. Type aliases cannot be merged — you must intersect them. In practice, use the type-or-interface decision consistently within a project and document the convention."
+  },
+  {
+    q: "What is a Page Object and how do TypeScript classes model it?",
+    a: "A Page Object encapsulates the UI structure and interactions of a single page or component, exposing high-level methods to tests. TypeScript classes model this with: a constructor that receives the Playwright Page, private methods for low-level selectors, and public methods for user-facing actions like goto(), signIn(), getError().",
+    senior: "The key design decision in Page Object classes is the level of abstraction. Methods should express user intent ('signIn') not DOM mechanics ('fillUsernameInputAndClickLoginButton'). Each method should leave the page in a predictable state. Returning page objects from navigation methods ('signIn() returns InventoryPage') creates a fluent, chainable API and documents the expected page flow."
+  },
+  {
+    q: "What do TypeScript access modifiers (public/private/protected) do?",
+    a: "public (default) — accessible anywhere. private — accessible only within the class. protected — accessible within the class and subclasses. readonly — assignable only in the constructor. In Playwright page objects: page is typically private or protected (implementation detail), and navigation/interaction methods are public (the test API).",
+    senior: "TypeScript access modifiers are compile-time only — they do not produce any runtime JavaScript and are fully erased in the compiled output. At runtime, JavaScript has no access modifier enforcement. This is a TypeScript-only safety net. For true runtime encapsulation, use a WeakMap or closure — but in Playwright test code, compile-time enforcement is almost always sufficient."
+  },
+]} />
