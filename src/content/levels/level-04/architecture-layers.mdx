@@ -1,0 +1,140 @@
+---
+title: Folder Structure & Layered Architecture
+level: 4
+order: 1
+description: How production Playwright frameworks are organised — the layers, what belongs in each, and the dependency rule that keeps 5,000 tests maintainable.
+duration: 30 min
+status: complete
+widgets: ['diagram', 'quiz']
+---
+
+import MermaidDiagram from '../../../components/react/MermaidDiagram';
+import Tip from '../../../components/astro/Tip.astro';
+import QuizCard from '../../../components/react/QuizCard';
+
+## The layers
+
+A production framework separates concerns into layers. Tests express
+business intent; everything mechanical lives below them.
+
+<MermaidDiagram client:only="react" chart={`flowchart TB
+  T["Test Layer<br/>specs: business intent only"] --> B["Business Layer<br/>flows, page objects, API clients"]
+  B --> C["Core Layer<br/>fixtures, base classes, helpers"]
+  C --> F["Foundation<br/>config, test data, environment"]
+  style T stroke:#F05133
+  style B stroke:#6BB5FF
+  style C stroke:#FFB454
+  style F stroke:#7EE787
+`} />
+
+**The dependency rule:** each layer depends only on layers below it. A test
+imports a page object; a page object never imports a test. Break this rule
+and changes ripple upward unpredictably.
+
+## A production folder structure
+
+```
+playwright-framework/
+├── tests/                      # Test layer — specs only
+│   ├── auth/
+│   │   └── login.spec.ts
+│   ├── checkout/
+│   │   └── checkout.spec.ts
+│   └── api/
+│       └── orders.api.spec.ts
+├── src/
+│   ├── pages/                  # Business layer — page objects
+│   │   ├── login.page.ts
+│   │   └── checkout.page.ts
+│   ├── flows/                  # Business layer — multi-page journeys
+│   │   └── purchase.flow.ts
+│   ├── api/                    # Business layer — API clients
+│   │   └── orders.client.ts
+│   ├── fixtures/               # Core layer — DI wiring
+│   │   └── test-fixtures.ts
+│   └── utils/                  # Core layer — pure helpers
+│       └── date.utils.ts
+├── test-data/                  # Foundation — builders + static data
+│   └── users.builder.ts
+├── playwright/.auth/           # Foundation — session state (gitignored)
+├── playwright.config.ts
+└── package.json
+```
+
+## What belongs where
+
+| Layer | Contains | Never contains |
+|---|---|---|
+| Tests | `test()` blocks, assertions, business language | locators, URLs, waits |
+| Flows | multi-page journeys (`purchaseFlow(page, item)`) | assertions about specific tests |
+| Pages | locators, page actions, navigation | `expect()` on business outcomes, test data |
+| Fixtures | object construction, setup/teardown, DI | business logic |
+| Utils | pure functions (dates, strings, random) | anything Playwright-specific |
+
+The most contested rule: **assertions live in tests, not page objects.** A
+page object that asserts couples every test to one expected outcome. Return
+state; let the test decide what it means.
+
+```ts
+// ❌ Page object asserting — every caller now expects success
+async signIn(user: string, pass: string) {
+  // ...fill and click...
+  await expect(this.page.getByText('Products')).toBeVisible();
+}
+
+// ✅ Page object returns, test asserts
+async signIn(user: string, pass: string): Promise<void> {
+  await this.page.getByPlaceholder('Username').fill(user);
+  await this.page.getByPlaceholder('Password').fill(pass);
+  await this.page.getByRole('button', { name: 'Login' }).click();
+}
+
+// In the test — intent is explicit, failure tests can reuse signIn
+await loginPage.signIn('locked_out_user', 'secret_sauce');
+await expect(page.getByText('locked out')).toBeVisible();
+```
+
+<Tip>One pragmatic exception: a page object may assert it has loaded (its own readiness), because that's a fact about the page, not a test outcome.</Tip>
+
+## Naming conventions
+
+```
+login.page.ts        → LoginPage class
+purchase.flow.ts     → purchaseFlow function or PurchaseFlow class
+orders.client.ts     → OrdersClient class
+login.spec.ts        → test file
+users.builder.ts     → buildUser() factory
+```
+
+Suffixes make the layer visible in every import statement — a reviewer can
+spot a layering violation (`import ... from '../tests/...'` inside a page
+object) without opening the file.
+
+## Scaling signals
+
+When these appear, the structure needs work:
+
+- A locator change touches ten test files → locators leaked above the page layer.
+- Two teams editing the same page object constantly conflict → split it into component objects.
+- `utils/` is 40 files → it became a junk drawer; promote cohesive clusters into named modules.
+- Test names don't match folder names → reorganise by user journey, not by page.
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="fw-arch" questions={[
+  {
+    q: "Describe the layers of a production test framework and the dependency rule between them.",
+    a: "Test layer (specs expressing business intent), business layer (page objects, flows, API clients), core layer (fixtures, base classes, utilities), foundation (config, test data, environment). The dependency rule: layers depend only downward. Tests import page objects; page objects never import tests or fixtures.",
+    senior: "The rule's payoff is change isolation: a UI redesign touches the pages layer only; a new environment touches foundation only. When estimating maintenance cost of a proposed framework, I look at one thing first: what's the blast radius of a locator change? If the answer is more than one file, the layering has already failed."
+  },
+  {
+    q: "Should page objects contain assertions? Defend your position.",
+    a: "No — assertions belong in tests. A page object that asserts success couples every caller to one expected outcome, making negative tests impossible without duplicating the method. Page objects perform actions and expose state; tests decide what that state means. Exception: a page may assert its own readiness (loaded state).",
+    senior: "This question reveals whether a candidate has maintained a framework long-term. Assertion-in-page-object feels DRY at first — 'every login should verify success' — until the first locked-account test, then you get signInExpectingError(), then signInMaybeError(), and the API rots. Separating action from judgment keeps both composable."
+  },
+  {
+    q: "How would you organise tests: by page, by feature, or by user journey?",
+    a: "By feature or journey, not by page. Folders like tests/checkout/, tests/auth/ map to how the business thinks and how failures get triaged. Page-based organisation (tests/login-page/) couples test structure to UI structure, which churns. The pages live in src/pages/ — already organised by page there.",
+    senior: "Journey organisation also enables risk-based CI: run tests/checkout/ on every PR touching payment code, full suite nightly. With page-based structure there's no mapping from code change to affected tests. Tagging (@critical, @smoke) layers on top, but folder structure is the primary selection mechanism teams actually use."
+  },
+]} />
