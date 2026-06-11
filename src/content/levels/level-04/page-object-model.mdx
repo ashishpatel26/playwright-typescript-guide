@@ -1,0 +1,242 @@
+---
+title: Page Object Model
+level: 4
+order: 2
+description: POM done properly — locators as fields, component objects for shared UI, fixture injection, and the navigation-returns-page pattern.
+duration: 40 min
+status: complete
+widgets: ['ts-playground', 'quiz']
+---
+
+import CodeTabs from '../../../components/astro/CodeTabs.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import TsPlayground from '../../../components/react/TsPlayground';
+import QuizCard from '../../../components/react/QuizCard';
+
+## The contract
+
+A page object encapsulates one page (or screen) behind an API that speaks
+user language. Tests call `inventory.addToCart('Backpack')`, never
+`page.locator('#add-to-cart-sauce-labs-backpack').click()`.
+
+## Locators as readonly fields
+
+Declare locators once in the constructor — not inline in methods. Playwright
+locators are lazy, so this costs nothing and gives every method the same
+single source of truth.
+
+```ts
+import { type Page, type Locator } from '@playwright/test';
+
+export class InventoryPage {
+  readonly page: Page;
+  readonly searchBox: Locator;
+  readonly sortDropdown: Locator;
+  readonly cartBadge: Locator;
+
+  constructor(page: Page) {
+    this.page = page;
+    this.searchBox = page.getByPlaceholder('Search products');
+    this.sortDropdown = page.getByRole('combobox', { name: 'Sort' });
+    this.cartBadge = page.getByTestId('cart-badge');
+  }
+
+  async goto(): Promise<void> {
+    await this.page.goto('/inventory.html');
+  }
+
+  async addToCart(productName: string): Promise<void> {
+    await this.page
+      .getByRole('listitem')
+      .filter({ hasText: productName })
+      .getByRole('button', { name: 'Add to cart' })
+      .click();
+  }
+
+  async cartCount(): Promise<number> {
+    if (await this.cartBadge.isHidden()) return 0;
+    return Number(await this.cartBadge.innerText());
+  }
+}
+```
+
+## Navigation returns the next page
+
+When an action navigates, return the destination page object. The framework
+documents its own page flow, and tests chain naturally:
+
+```ts
+export class LoginPage {
+  // ...
+  async signInExpectingSuccess(user: string, pass: string): Promise<InventoryPage> {
+    await this.usernameInput.fill(user);
+    await this.passwordInput.fill(pass);
+    await this.loginButton.click();
+    return new InventoryPage(this.page);
+  }
+}
+
+// Test reads as a journey
+const inventory = await loginPage.signInExpectingSuccess('standard_user', 'secret_sauce');
+await inventory.addToCart('Sauce Labs Backpack');
+```
+
+## Component objects for shared UI
+
+A header, cart drawer, or data grid that appears on many pages gets its own
+object, composed into pages that contain it:
+
+```ts
+export class HeaderComponent {
+  readonly cartLink: Locator;
+  readonly menuButton: Locator;
+
+  constructor(private root: Locator) {
+    this.cartLink = root.getByRole('link', { name: 'Cart' });
+    this.menuButton = root.getByRole('button', { name: 'Menu' });
+  }
+
+  async openCart(): Promise<void> {
+    await this.cartLink.click();
+  }
+}
+
+export class InventoryPage {
+  readonly header: HeaderComponent;
+
+  constructor(page: Page) {
+    // Scope the component to its container — not the whole page
+    this.header = new HeaderComponent(page.getByRole('banner'));
+  }
+}
+
+// Test: inventory.header.openCart()
+```
+
+Scoping the component to a root `Locator` (not the `Page`) means it works
+even when two instances exist on one page.
+
+## Fixture injection: no `new` in tests
+
+<CodeTabs labels={['test-fixtures.ts', 'checkout.spec.ts']}>
+  <Fragment slot="tab-0">
+
+```ts
+import { test as base } from '@playwright/test';
+import { LoginPage } from '../pages/login.page';
+import { InventoryPage } from '../pages/inventory.page';
+import { CheckoutPage } from '../pages/checkout.page';
+
+type PageFixtures = {
+  loginPage: LoginPage;
+  inventoryPage: InventoryPage;
+  checkoutPage: CheckoutPage;
+};
+
+export const test = base.extend<PageFixtures>({
+  loginPage: async ({ page }, use) => use(new LoginPage(page)),
+  inventoryPage: async ({ page }, use) => use(new InventoryPage(page)),
+  checkoutPage: async ({ page }, use) => use(new CheckoutPage(page)),
+});
+
+export { expect } from '@playwright/test';
+```
+
+  </Fragment>
+  <Fragment slot="tab-1">
+
+```ts
+import { test, expect } from '../fixtures/test-fixtures';
+
+// Pages arrive ready-made — zero construction noise
+test('checkout totals include tax', async ({ inventoryPage, checkoutPage, page }) => {
+  await inventoryPage.goto();
+  await inventoryPage.addToCart('Sauce Labs Backpack');
+  await checkoutPage.startCheckout();
+
+  await expect(page.getByTestId('tax')).toContainText('$2.40');
+});
+```
+
+  </Fragment>
+</CodeTabs>
+
+<Tip>Fixtures are Playwright's dependency injection. Tests declare what they need in the callback signature; the framework constructs and tears down. No <code>new</code>, no manual cleanup, no forgotten teardown.</Tip>
+
+## Try it: a page object in pure TypeScript
+
+<TsPlayground
+  client:only="react"
+  label="POM structure — Playground"
+  height={400}
+  starter={`// Page Object pattern with a mock Page (pure TS, no Playwright needed)
+interface MockPage {
+  fill(selector: string, value: string): void;
+  click(selector: string): void;
+  textOf(selector: string): string;
+}
+
+function createMockPage(): MockPage {
+  const state: Record<string, string> = {};
+  return {
+    fill: (sel, value) => { state[sel] = value; },
+    click: (sel) => {
+      if (sel === '#login' && state['#user'] === 'standard_user') {
+        state['#banner'] = 'Products';
+      } else if (sel === '#login') {
+        state['#banner'] = 'Invalid credentials';
+      }
+    },
+    textOf: (sel) => state[sel] ?? '',
+  };
+}
+
+// The page object: locators in one place, methods speak user language
+class LoginPage {
+  private readonly user = '#user';
+  private readonly pass = '#pass';
+  private readonly loginBtn = '#login';
+  private readonly banner = '#banner';
+
+  constructor(private page: MockPage) {}
+
+  signIn(username: string, password: string): void {
+    this.page.fill(this.user, username);
+    this.page.fill(this.pass, password);
+    this.page.click(this.loginBtn);
+  }
+
+  bannerText(): string {
+    return this.page.textOf(this.banner);
+  }
+}
+
+const login = new LoginPage(createMockPage());
+login.signIn('standard_user', 'secret_sauce');
+console.log('Success path:', login.bannerText());
+
+const login2 = new LoginPage(createMockPage());
+login2.signIn('wrong_user', 'nope');
+console.log('Failure path:', login2.bannerText());
+`}
+/>
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="fw-pom" questions={[
+  {
+    q: "What problems does the Page Object Model solve?",
+    a: "Duplication and fragility. Without POM, locators repeat across tests, and one UI change breaks dozens of files. POM centralises each page's locators and interactions in one class — a locator changes in exactly one place. It also raises test readability: tests speak user language (addToCart) instead of DOM language (click #btn-3).",
+    senior: "POM's real value is a maintenance contract: UI churn cost becomes O(pages changed), not O(tests affected). Its failure mode is god objects — a 800-line page object for a complex screen. The fix is composition: component objects for header/grid/dialog, scoped to a root Locator so they're reusable and parallel-instance safe."
+  },
+  {
+    q: "Why declare locators as constructor fields instead of inline in methods?",
+    a: "Single source of truth per element — two methods touching the same button share one locator definition. Playwright locators are lazy (they resolve at action time), so declaring upfront has no performance cost. It also makes the page's surface area auditable: open the constructor and see every element the page touches.",
+    senior: "The lazy-locator point is the one candidates miss: this pattern would be wrong in Selenium, where findElement executes eagerly and goes stale. In Playwright a Locator is a query description, not a DOM handle, so constructor declaration is free. This distinction also explains why Playwright POMs don't need @FindBy-style annotations or PageFactory."
+  },
+  {
+    q: "How do fixtures change how page objects are used in tests?",
+    a: "Fixtures construct page objects and inject them via the test callback — tests declare { inventoryPage, checkoutPage } and receive ready instances. This removes construction boilerplate, guarantees consistent setup, and centralises teardown. Tests never call new, so refactoring constructors touches one fixture file.",
+    senior: "Fixtures also compose: an authenticatedInventoryPage fixture can depend on a session fixture which depends on storageState. That dependency graph replaces the base-class inheritance trees that plague Java frameworks. Composition over inheritance, enforced by the test runner itself — it's the strongest architectural feature Playwright has."
+  },
+]} />
