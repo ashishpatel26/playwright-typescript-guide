@@ -76,4 +76,14 @@ test.describe('Widget smoke tests', () => {
     await page.goto('levels/6/sql-fundamentals/');
     await expect(page.locator('[data-testid="quiz-card"]')).toBeVisible({ timeout: 15000 });
   });
+
+  test('L7 github-actions renders with Mermaid diagram', async ({ page }) => {
+    await page.goto('levels/7/github-actions/');
+    await expect(page.locator('svg[id^="mmd-"]').first()).toBeVisible({ timeout: 20000 });
+  });
+
+  test('L8 docker-compose renders with Mermaid diagram', async ({ page }) => {
+    await page.goto('levels/8/docker-compose/');
+    await expect(page.locator('svg[id^="mmd-"]').first()).toBeVisible({ timeout: 20000 });
+  });
 });
