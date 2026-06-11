@@ -1,0 +1,162 @@
+---
+title: Browser Contexts & Multi-Tab
+level: 3
+order: 1
+description: The browser → context → page hierarchy, test isolation, multi-tab and multi-window flows — the model underneath every Playwright test.
+duration: 35 min
+status: complete
+widgets: ['diagram', 'quiz']
+---
+
+import ConceptDiagram from '../../../components/react/ConceptDiagram';
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import QuizCard from '../../../components/react/QuizCard';
+
+## The hierarchy
+
+<ConceptDiagram client:only="react" type="browser-hierarchy" />
+
+One **Browser** process can host many **BrowserContexts**. Each context is an
+isolated, incognito-like session: its own cookies, localStorage, cache, and
+permissions. Each context can open many **Pages** (tabs).
+
+```ts
+import { chromium } from '@playwright/test';
+
+const browser = await chromium.launch();        // one process
+const context = await browser.newContext();     // isolated session
+const page = await context.newPage();           // a tab inside it
+```
+
+In `@playwright/test`, the `page` fixture comes from a fresh context per
+test — this is why tests never leak cookies or storage into each other.
+
+## Why contexts beat new browsers
+
+Launching a browser process costs seconds. Creating a context costs
+milliseconds. Contexts give you isolation at near-zero cost, which is what
+makes running hundreds of isolated E2E tests practical.
+
+```ts
+// Two users in one test — two contexts, one browser
+test('admin sees what user posted', async ({ browser }) => {
+  const userContext = await browser.newContext();
+  const adminContext = await browser.newContext();
+
+  const userPage = await userContext.newPage();
+  const adminPage = await adminContext.newPage();
+
+  await userPage.goto('/posts/new');
+  // user creates a post...
+
+  await adminPage.goto('/admin/moderation');
+  // admin sees it — different session, no shared cookies
+
+  await userContext.close();
+  await adminContext.close();
+});
+```
+
+<Tip>Multi-user scenarios (chat, approvals, marketplace buyer/seller) are the killer use case for multiple contexts. One test, two isolated sessions, real interaction between them.</Tip>
+
+## Context options
+
+```ts
+const context = await browser.newContext({
+  viewport: { width: 1280, height: 720 },
+  locale: 'en-GB',
+  timezoneId: 'Europe/London',
+  permissions: ['geolocation'],
+  geolocation: { latitude: 51.5, longitude: -0.12 },
+  colorScheme: 'dark',
+  baseURL: 'https://staging.example.com',
+  storageState: 'auth/admin.json',   // pre-loaded cookies + localStorage
+});
+```
+
+In `@playwright/test`, set these via `use` in the config or with
+`test.use()` per file:
+
+```ts
+test.use({ locale: 'de-DE', timezoneId: 'Europe/Berlin' });
+
+test('dates render in German format', async ({ page }) => {
+  // page fixture now has German locale
+});
+```
+
+## Multi-tab: handling popups
+
+A new tab triggered by the app (target="_blank", window.open) arrives as a
+`popup` event on the page, or a `page` event on the context:
+
+```ts
+test('terms link opens in new tab', async ({ page }) => {
+  await page.goto('/signup');
+
+  // Set up the listener BEFORE the click — same pattern as waitForResponse
+  const [termsPage] = await Promise.all([
+    page.waitForEvent('popup'),
+    page.getByRole('link', { name: 'Terms of Service' }).click(),
+  ]);
+
+  await termsPage.waitForLoadState();
+  await expect(termsPage).toHaveURL(/terms/);
+  await expect(termsPage.getByRole('heading', { name: 'Terms' })).toBeVisible();
+
+  // Original page is still alive and usable
+  await page.getByLabel('I agree').check();
+});
+```
+
+## Multiple windows from the context
+
+```ts
+test('compare two product pages side by side', async ({ context }) => {
+  const page1 = await context.newPage();
+  const page2 = await context.newPage();
+
+  await page1.goto('/product/100');
+  await page2.goto('/product/200');
+
+  const price1 = await page1.getByTestId('price').innerText();
+  const price2 = await page2.getByTestId('price').innerText();
+  expect(price1).not.toBe(price2);
+});
+```
+
+Both pages share the context's session — same login, same cookies. Use
+separate contexts when you need separate identities.
+
+## Reference
+
+<CmdTable rows={[
+  { c: 'browser.newContext(options)', d: 'New isolated session' },
+  { c: 'context.newPage()', d: 'New tab in this context' },
+  { c: 'page.waitForEvent(\'popup\')', d: 'Capture tab opened by the app' },
+  { c: 'context.pages()', d: 'All open pages in the context' },
+  { c: 'context.storageState({ path })', d: 'Save cookies + localStorage to file' },
+  { c: 'context.close()', d: 'Close context and all its pages' },
+  { c: 'test.use({ ...options })', d: 'Context options for a test file' },
+]} />
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="pw-adv-contexts" questions={[
+  {
+    q: "What is a BrowserContext and how does it provide test isolation?",
+    a: "A BrowserContext is an isolated browser session inside a single browser process — its own cookies, localStorage, sessionStorage, cache, and permissions. Playwright Test creates a fresh context per test, so no state leaks between tests. Creating a context takes milliseconds versus seconds for a browser launch, making per-test isolation cheap.",
+    senior: "Context isolation is the foundation of Playwright's parallel execution model. Because contexts share the browser process but not state, you can run many tests against few browser processes. The practical limit is memory per context. When debugging cross-test pollution, the first question is whether something escaped the context boundary — usually external state: a shared test account, a database row, a third-party service."
+  },
+  {
+    q: "How do you test a flow where clicking a link opens a new tab?",
+    a: "Use Promise.all with page.waitForEvent('popup') and the click. The popup event fires with the new Page object, which you then interact with like any page. Setting up the listener before the click prevents a race where the tab opens before the listener exists.",
+    senior: "The popup arrives before it has navigated — call waitForLoadState() on it before asserting content. Also distinguish popup (opened from a page) from context.waitForEvent('page') which catches any new page in the context, including ones your test opens itself. For window.open with noopener, the new page has no opener reference but Playwright still delivers the popup event."
+  },
+  {
+    q: "When would you use two BrowserContexts in one test?",
+    a: "Multi-user scenarios: a chat between two users, an admin approving what a user submitted, a buyer and seller in a marketplace. Each context is an independent identity with its own login session, and both run in one test so you can assert the interaction end to end.",
+    senior: "The alternative — two separate tests with shared external state — is worse: it introduces ordering dependencies and breaks parallel execution. Two contexts in one test keeps the interaction atomic. The cost: that test cannot be split across workers, so keep multi-context tests focused on the interaction itself, not full journeys for both users."
+  },
+]} />
