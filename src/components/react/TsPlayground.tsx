@@ -34,6 +34,17 @@ window.addEventListener('message', function(e) {
 
 interface OutputLine { kind: 'log' | 'error' | 'warn'; text: string; }
 
+// monaco-editor 0.55 ships `languages.typescript` typings as a deprecated
+// stub ({ deprecated: true }), but the runtime API still exists because
+// @monaco-editor/react loads the TS language contribution. Narrow local
+// types restore safe access without depending on the stub.
+interface TsWorkerClient {
+  getEmitOutput(uri: string): Promise<{ outputFiles: { text: string }[] }>;
+}
+interface TsLanguageRuntime {
+  getTypeScriptWorker(): Promise<(uri: MonacoNS.Uri) => Promise<TsWorkerClient>>;
+}
+
 export interface TsPlaygroundProps {
   starter: string;
   height?: number;
@@ -75,7 +86,8 @@ function TsPlaygroundInner({ starter, height = 260, label = 'TypeScript Playgrou
       if (!model) { setRunning(false); return; }
 
       const uriStr = model.uri.toString();
-      const getWorker = await monaco.languages.typescript.getTypeScriptWorker();
+      const tsLang = (monaco.languages as unknown as { typescript: TsLanguageRuntime }).typescript;
+      const getWorker = await tsLang.getTypeScriptWorker();
       const client = await getWorker(model.uri);
       const emit = await client.getEmitOutput(uriStr);
       const js = emit.outputFiles[0]?.text ?? '';
