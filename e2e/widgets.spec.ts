@@ -9,7 +9,6 @@ test.describe('Widget smoke tests', () => {
 
   test('ConceptDiagram renders on testing-pyramid', async ({ page }) => {
     await page.goto('levels/0/testing-pyramid/');
-    // ConceptDiagram testing-pyramid SVG has role="img" with aria-label
     await expect(page.locator('svg[aria-label*="Testing pyramid"]')).toBeVisible({ timeout: 15000 });
   });
 
@@ -20,13 +19,31 @@ test.describe('Widget smoke tests', () => {
 
   test('LocatorLab renders on locators page', async ({ page }) => {
     await page.goto('levels/2/locators/');
-    // LocatorLab iframe shows login.html — verify the username field is present
     await expect(page.frameLocator('iframe[title="practice page"]').locator('[data-testid="username"]')).toBeVisible({ timeout: 15000 });
   });
 
   test('PwRunner renders on locators page', async ({ page }) => {
     await page.goto('levels/2/locators/');
-    // PwRunner has a Run button
     await expect(page.getByRole('button', { name: /Run/i }).first()).toBeVisible({ timeout: 20000 });
+  });
+
+  test('L1 TsPlayground renders on variables-and-types', async ({ page }) => {
+    await page.goto('levels/1/variables-and-types/');
+    await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 20000 });
+  });
+
+  test('L0 quiz renders on test-trophy', async ({ page }) => {
+    await page.goto('levels/0/test-trophy/');
+    await expect(page.locator('[data-testid="quiz-card"]')).toBeVisible({ timeout: 15000 });
+  });
+
+  test('L2 first-test page renders', async ({ page }) => {
+    await page.goto('levels/2/first-test/');
+    await expect(page.getByRole('heading', { name: 'Your First Playwright Test' })).toBeVisible();
+  });
+
+  test('L2 waiting page renders with ConceptDiagram', async ({ page }) => {
+    await page.goto('levels/2/waiting/');
+    await expect(page.locator('svg[aria-label*="Retry timeline"]')).toBeVisible({ timeout: 15000 });
   });
 });
