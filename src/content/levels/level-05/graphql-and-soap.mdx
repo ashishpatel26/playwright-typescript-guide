@@ -1,0 +1,143 @@
+---
+title: "GraphQL & SOAP Testing"
+level: 5
+order: 2
+description: "Test GraphQL queries and SOAP endpoints using Playwright's request fixture."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+practiceSite:
+  name: Countries GraphQL API
+  url: https://countries.trevorblades.com
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## GraphQL Over HTTP
+
+GraphQL is HTTP POST with a JSON body containing `query` and optional `variables`. Playwright's `request.post()` handles it identically to REST.
+
+```ts
+import { test, expect } from '@playwright/test';
+
+test('query countries list', async ({ request }) => {
+  const res = await request.post('https://countries.trevorblades.com/', {
+    data: {
+      query: `query { countries { code name } }`,
+    },
+  });
+  expect(res.status()).toBe(200);
+  const { data } = await res.json();
+  expect(data.countries.length).toBeGreaterThan(100);
+});
+```
+
+## Variables and Fragments
+
+```ts
+test('query single country with variables', async ({ request }) => {
+  const res = await request.post('https://countries.trevorblades.com/', {
+    data: {
+      query: `
+        query GetCountry($code: ID!) {
+          country(code: $code) {
+            name
+            capital
+            currency
+          }
+        }
+      `,
+      variables: { code: 'US' },
+    },
+  });
+  const { data } = await res.json();
+  expect(data.country.name).toBe('United States');
+  expect(data.country.capital).toBe('Washington D.C.');
+});
+```
+
+## GraphQL Error Handling
+
+GraphQL **always returns HTTP 200** — errors appear in the `errors` array in the response body. Check both:
+
+```ts
+test('invalid query returns graphql error', async ({ request }) => {
+  const res = await request.post('https://countries.trevorblades.com/', {
+    data: { query: `query { nonExistentField }` },
+  });
+  expect(res.status()).toBe(200);       // GraphQL: always 200
+  const body = await res.json();
+  expect(body.errors).toBeDefined();    // Error in body
+  expect(body.data).toBeNull();
+});
+```
+
+## Mutations
+
+```ts
+// Hypothetical write API
+test('create mutation', async ({ request }) => {
+  const res = await request.post('/graphql', {
+    headers: { Authorization: `Bearer ${token}` },
+    data: {
+      query: `
+        mutation CreatePost($title: String!) {
+          createPost(title: $title) { id title }
+        }
+      `,
+      variables: { title: 'Hello World' },
+    },
+  });
+  const { data } = await res.json();
+  expect(data.createPost.id).toBeDefined();
+});
+```
+
+## SOAP Testing
+
+SOAP uses HTTP POST with an XML body. Playwright's `request` fixture handles it with a `Content-Type: text/xml` header:
+
+```ts
+test('soap calculator add', async ({ request }) => {
+  const soapBody = `
+    <?xml version="1.0" encoding="utf-8"?>
+    <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+      <soap:Body>
+        <Add xmlns="http://tempuri.org/">
+          <intA>5</intA>
+          <intB>3</intB>
+        </Add>
+      </soap:Body>
+    </soap:Envelope>
+  `.trim();
+
+  const res = await request.post('http://www.dneonline.com/calculator.asmx', {
+    headers: {
+      'Content-Type': 'text/xml; charset=utf-8',
+      SOAPAction: '"http://tempuri.org/Add"',
+    },
+    data: soapBody,
+  });
+  expect(res.status()).toBe(200);
+  const text = await res.text();
+  expect(text).toContain('<AddResult>8</AddResult>');
+});
+```
+
+## GraphQL vs REST vs SOAP
+
+| | GraphQL | REST | SOAP |
+|---|---|---|---|
+| Transport | HTTP POST | HTTP verbs | HTTP POST |
+| Format | JSON | JSON/XML | XML |
+| HTTP status on error | Always 200 | 4xx/5xx | 200 or 500 |
+| Schema | SDL (`schema.graphql`) | OpenAPI | WSDL |
+| Assertion strategy | Check `body.errors` | Check status | Parse XML |
+
+<QuizCard client:only="react" storageKey="api-graphql" questions={[
+  { q: "Why should you always check `body.errors` in a GraphQL response even when HTTP status is 200?", a: "GraphQL always returns HTTP 200 — business-logic errors appear in `body.errors`, not HTTP status. A 200 with errors means the query failed." },
+  { q: "How do you pass dynamic values to a GraphQL query in Playwright?", a: "Use the `variables` key in the request body alongside `query`. Example: `data: { query: '...($id: ID!){...}', variables: { id: '123' } }`." },
+  { q: "What headers are required for a SOAP request?", a: "`Content-Type: text/xml` and `SOAPAction` (the operation URI, often quoted). Without `SOAPAction` many SOAP services reject the request." },
+  { q: "A GraphQL mutation returns `data: null, errors: [{message: 'Unauthorized'}]`. What HTTP status did the server return?", a: "Almost certainly 200. GraphQL convention returns 200 for application-level errors. Only transport errors (network down, server crash) cause non-200 status.", senior: "Some newer GraphQL servers use 4xx for auth errors — always document the server's convention in your test suite." }
+]} />

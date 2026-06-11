@@ -1,0 +1,157 @@
+---
+title: "API Auth: Headers, JWT, OAuth2"
+level: 5
+order: 3
+description: "Authenticate API test requests using headers, Bearer tokens, JWT, and OAuth2 flows."
+duration: "35 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Authentication Strategies
+
+| Strategy | How passed | Common use |
+|---|---|---|
+| API Key | Header or query param | Simple public APIs |
+| Bearer token | `Authorization: Bearer <token>` | REST APIs post-login |
+| JWT | Same as Bearer, token is self-contained | Stateless auth |
+| OAuth2 | Token endpoint flow | Third-party integrations |
+| Basic Auth | `Authorization: Basic base64(user:pass)` | Legacy or internal |
+| Cookie / Session | Cookie jar | Web session auth |
+
+## API Key in Headers
+
+```ts
+test('api key in header', async ({ request }) => {
+  const res = await request.get('https://api.example.com/data', {
+    headers: { 'X-API-Key': process.env.API_KEY! },
+  });
+  expect(res.ok()).toBe(true);
+});
+```
+
+Store keys in `.env` (gitignored), read via `process.env`. Never hardcode.
+
+## Bearer Token Flow
+
+```ts
+// fixtures/auth.ts
+import { test as base, APIRequestContext } from '@playwright/test';
+
+export const test = base.extend<{ authedRequest: APIRequestContext }>({
+  authedRequest: async ({ playwright }, use) => {
+    const ctx = await playwright.request.newContext({
+      baseURL: process.env.API_BASE_URL,
+    });
+    const res = await ctx.post('/auth/login', {
+      data: { username: 'admin', password: process.env.ADMIN_PASS },
+    });
+    const { token } = await res.json();
+    await ctx.dispose();
+
+    const authed = await playwright.request.newContext({
+      baseURL: process.env.API_BASE_URL,
+      extraHTTPHeaders: { Authorization: `Bearer ${token}` },
+    });
+    await use(authed);
+    await authed.dispose();
+  },
+});
+```
+
+```ts
+// tests/users.spec.ts
+import { test } from '../fixtures/auth';
+import { expect } from '@playwright/test';
+
+test('admin can list users', async ({ authedRequest }) => {
+  const res = await authedRequest.get('/users');
+  expect(res.status()).toBe(200);
+});
+```
+
+## JWT Validation
+
+JWTs are base64-encoded. Decode the payload to assert claims without a crypto library:
+
+```ts
+function decodeJwtPayload(token: string) {
+  const [, payload] = token.split('.');
+  return JSON.parse(Buffer.from(payload, 'base64url').toString());
+}
+
+test('jwt contains expected claims', async ({ request }) => {
+  const res = await request.post('/auth/login', {
+    data: { username: 'admin', password: 'secret' },
+  });
+  const { token } = await res.json();
+  const payload = decodeJwtPayload(token);
+
+  expect(payload.sub).toBe('admin');
+  expect(payload.role).toBe('admin');
+  expect(payload.exp).toBeGreaterThan(Date.now() / 1000);  // not expired
+});
+```
+
+## OAuth2 Client Credentials
+
+Machine-to-machine OAuth2 — get a token from the token endpoint, attach to requests:
+
+```ts
+async function getOAuthToken(request: APIRequestContext): Promise<string> {
+  const res = await request.post(process.env.OAUTH_TOKEN_URL!, {
+    form: {
+      grant_type: 'client_credentials',
+      client_id: process.env.OAUTH_CLIENT_ID!,
+      client_secret: process.env.OAUTH_CLIENT_SECRET!,
+      scope: 'read:data',
+    },
+  });
+  const { access_token } = await res.json();
+  return access_token;
+}
+
+test('oauth2 client credentials flow', async ({ request }) => {
+  const token = await getOAuthToken(request);
+  const res = await request.get('/protected-resource', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(res.ok()).toBe(true);
+});
+```
+
+## Playwright `storageState` for Session Auth
+
+Reuse authenticated browser sessions across tests:
+
+```ts
+// global-setup.ts
+import { chromium, FullConfig } from '@playwright/test';
+
+async function globalSetup(config: FullConfig) {
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  await page.goto(config.projects[0].use.baseURL + '/login');
+  await page.fill('[name=username]', 'admin');
+  await page.fill('[name=password]', process.env.ADMIN_PASS!);
+  await page.click('[type=submit]');
+  await page.context().storageState({ path: 'playwright/.auth/admin.json' });
+  await browser.close();
+}
+export default globalSetup;
+```
+
+```ts
+// playwright.config.ts — use saved state
+projects: [{ use: { storageState: 'playwright/.auth/admin.json' } }]
+```
+
+<QuizCard client:only="react" storageKey="api-auth" questions={[
+  { q: "How do you set a Bearer token for all requests in a Playwright `APIRequestContext`?", a: "Pass `extraHTTPHeaders: { Authorization: 'Bearer <token>' }` when creating the context via `playwright.request.newContext()`. All requests from that context include the header." },
+  { q: "Why store API credentials in `.env` rather than hardcoding in test files?", a: "Prevents secrets from being committed to version control. `.env` files are gitignored. CI injects them via secret environment variables." },
+  { q: "What is `storageState` and when is it used?", a: "A snapshot of browser cookies + localStorage. Used to persist an authenticated session so tests don't need to re-login on every run. Set via `globalSetup`, consumed via `use.storageState` in config.", senior: "Save one state file per role (admin, user, read-only). Avoid sharing state between roles — test isolation prevents one role's cookies leaking into another's context." },
+  { q: "A JWT `exp` claim is `1700000000`. How do you assert the token is not expired without a JWT library?", a: "Decode the base64url payload, parse JSON, then compare `payload.exp > Date.now() / 1000`. `Date.now()` is milliseconds, JWT `exp` is seconds." }
+]} />
