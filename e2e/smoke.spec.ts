@@ -13,7 +13,7 @@ test('landing page renders hero and roadmap', async ({ page }) => {
 test('level hub lists topics', async ({ page }) => {
   await page.goto('levels/0/');
   await expect(page.getByRole('heading', { name: 'Testing Fundamentals' })).toBeVisible();
-  await expect(page.locator('.topic-card')).toHaveCount(2);
+  await expect(page.locator('.topic-card')).toHaveCount(5);
 });
 
 test('topic page has sidebar, TOC, and next nav', async ({ page }) => {
@@ -24,8 +24,8 @@ test('topic page has sidebar, TOC, and next nav', async ({ page }) => {
   await expect(page).toHaveURL(/testing-pyramid/);
 });
 
-test('draft topics are not built', async ({ page }) => {
-  const res = await page.goto('levels/2/actions/');
+test('non-existent topic returns 404', async ({ page }) => {
+  const res = await page.goto('levels/99/does-not-exist/');
   expect(res!.status()).toBe(404);
 });
 

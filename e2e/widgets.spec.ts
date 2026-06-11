@@ -56,4 +56,14 @@ test.describe('Widget smoke tests', () => {
     await page.goto('levels/3/debugging-and-tracing/');
     await expect(page.locator('[data-testid="quiz-card"]')).toBeVisible({ timeout: 15000 });
   });
+
+  test('L4 architecture page renders with Mermaid diagram', async ({ page }) => {
+    await page.goto('levels/4/architecture-layers/');
+    await expect(page.locator('svg[id^="mmd-"]').first()).toBeVisible({ timeout: 20000 });
+  });
+
+  test('L4 design-patterns renders with TsPlayground', async ({ page }) => {
+    await page.goto('levels/4/design-patterns/');
+    await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 20000 });
+  });
 });
