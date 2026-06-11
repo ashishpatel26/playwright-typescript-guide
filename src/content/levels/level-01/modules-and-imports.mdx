@@ -1,0 +1,177 @@
+---
+title: Modules & Imports
+level: 1
+order: 5
+description: ES modules, barrel exports, and the import patterns that keep Playwright projects organised — from page objects to shared fixtures and test data.
+duration: 20 min
+status: complete
+widgets: ['quiz']
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+import CodeTabs from '../../../components/astro/CodeTabs.astro';
+import Tip from '../../../components/astro/Tip.astro';
+
+## ES modules in TypeScript
+
+TypeScript uses ES module syntax. Each file is a module; names are private
+by default and must be explicitly exported.
+
+```ts
+// math.ts — named exports
+export function add(a: number, b: number): number {
+  return a + b;
+}
+
+export const PI = 3.14159;
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+// Default export — only one per file
+export default class Calculator {
+  add(a: number, b: number) { return a + b; }
+}
+```
+
+```ts
+// main.ts — importing
+import Calculator, { add, PI, type Point } from './math';
+
+// Namespace import — all named exports under one object
+import * as math from './math';
+math.add(1, 2);
+
+// Type-only import — erased at runtime (zero JS output)
+import type { Point } from './math';
+```
+
+## Barrel exports
+
+A barrel (`index.ts`) re-exports everything from a directory, creating a
+single import point:
+
+```ts
+// pages/index.ts — barrel
+export { LoginPage } from './login.page';
+export { InventoryPage } from './inventory.page';
+export { CheckoutPage } from './checkout.page';
+
+// test file — clean single import
+import { LoginPage, InventoryPage, CheckoutPage } from '../pages';
+```
+
+<Tip>Barrels are convenient but can cause circular dependency issues and slow TypeScript project startup. For large projects, prefer direct imports. Use barrels for public library APIs where import ergonomics matter.</Tip>
+
+## Playwright import patterns
+
+<CodeTabs labels={['login.page.ts', 'test-fixtures.ts', 'login.spec.ts']}>
+  <Fragment slot="tab-0">
+
+```ts
+// pages/login.page.ts
+import type { Page } from '@playwright/test';
+
+export class LoginPage {
+  constructor(private readonly page: Page) {}
+
+  async goto(): Promise<void> {
+    await this.page.goto('/');
+  }
+
+  async signIn(username: string, password: string): Promise<void> {
+    await this.page.getByPlaceholder('Username').fill(username);
+    await this.page.getByPlaceholder('Password').fill(password);
+    await this.page.getByRole('button', { name: 'Login' }).click();
+  }
+}
+```
+
+  </Fragment>
+  <Fragment slot="tab-1">
+
+```ts
+// fixtures/test-fixtures.ts
+import { test as base } from '@playwright/test';
+import { LoginPage } from '../pages/login.page';
+
+type Fixtures = {
+  loginPage: LoginPage;
+};
+
+export const test = base.extend<Fixtures>({
+  loginPage: async ({ page }, use) => {
+    const loginPage = new LoginPage(page);
+    await use(loginPage);
+  },
+});
+
+export { expect } from '@playwright/test';
+```
+
+  </Fragment>
+  <Fragment slot="tab-2">
+
+```ts
+// tests/login.spec.ts
+import { test, expect } from '../fixtures/test-fixtures';
+
+test('standard user can log in', async ({ loginPage, page }) => {
+  await loginPage.goto();
+  await loginPage.signIn('standard_user', 'secret_sauce');
+  await expect(page.getByText('Products')).toBeVisible();
+});
+```
+
+  </Fragment>
+</CodeTabs>
+
+## tsconfig.json path aliases
+
+Path aliases replace relative import hell (`'../../../pages/login.page'`) with clean absolute paths:
+
+```json
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@pages/*": ["src/pages/*"],
+      "@fixtures/*": ["src/fixtures/*"],
+      "@data/*": ["src/test-data/*"]
+    }
+  }
+}
+```
+
+```ts
+// Before path aliases
+import { LoginPage } from '../../../pages/login.page';
+
+// After path aliases
+import { LoginPage } from '@pages/login.page';
+```
+
+Note: Playwright requires a `require` mapping in `playwright.config.ts` to
+match the tsconfig paths (via `tsconfig-paths` or native Node 18+ support).
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="ts-modules-imports" questions={[
+  {
+    q: "What is the difference between a named export and a default export?",
+    a: "Named exports: multiple per file, imported with the exact name (or aliased with 'as'). Default exports: one per file, imported with any name. Playwright page object classes are typically named exports — it keeps the class name consistent across all import sites and makes refactoring easier with IDE tools.",
+    senior: "Default exports are harder to refactor with automated tools because the imported name is arbitrary. In large test frameworks with many page objects, named exports + barrel files give you predictable import paths and refactoring-safe names. The Playwright team uses named exports exclusively in their codebase."
+  },
+  {
+    q: "What is a barrel file and what problem does it solve?",
+    a: "A barrel (index.ts) re-exports everything from a directory under a single import path. It solves import ergonomics: instead of knowing the exact file for each class, tests import from the directory: import { LoginPage, CartPage } from '../pages'. One import line regardless of how many page objects you have.",
+    senior: "Barrels introduce a coupling risk: importing one item from the barrel forces the module system to load the entire barrel (all re-exported modules). In large projects this can slow startup and create circular dependency chains. Mitigation: use tree-shaking-aware bundlers, or avoid barrels for internal imports and use them only for public package APIs."
+  },
+  {
+    q: "What is import type and why does it matter?",
+    a: "import type imports only TypeScript type information, never a runtime value. It is erased completely at compilation. This is important for two reasons: 1) It prevents accidental circular runtime dependencies. 2) It makes the module graph explicit — a file that only imports types has zero runtime dependency on that module.",
+    senior: "In Playwright fixtures, import type is critical for the fixture type parameter: test.extend<{ loginPage: LoginPage }>() needs the LoginPage type but not the class itself in the fixture type declaration. Using import type there makes the intent clear and prevents the fixture module from importing the implementation unnecessarily. TypeScript 5.0's verbatimModuleSyntax compiler option enforces this discipline across the codebase."
+  },
+]} />
