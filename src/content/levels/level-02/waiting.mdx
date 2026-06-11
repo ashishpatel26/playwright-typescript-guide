@@ -1,0 +1,153 @@
+---
+title: Waiting Strategies
+level: 2
+order: 5
+description: Auto-wait, explicit waits, network waits — and why sleep() is always wrong. Master the retry-until-actionable model that eliminates 90% of flakiness.
+duration: 25 min
+status: complete
+widgets: ['diagram', 'quiz']
+---
+
+import ConceptDiagram from '../../../components/react/ConceptDiagram';
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import QuizCard from '../../../components/react/QuizCard';
+
+## The problem: timing in async UIs
+
+Every UI interaction is asynchronous. You click a button; the server responds;
+the DOM updates. Your test code runs faster than the browser. Without waiting,
+assertions see the pre-update state.
+
+## Auto-wait — the default
+
+Playwright retries every action and assertion until it succeeds or the timeout
+expires. This is called auto-wait.
+
+<ConceptDiagram client:only="react" type="retry-timeline" />
+
+**For actions** (`click`, `fill`, `selectOption`):
+- Retries until the element is actionable (visible, stable, enabled, not covered)
+- Timeout configurable per action: `{ timeout: 5_000 }`
+- Global default: `actionTimeout` in playwright.config.ts (default 30 s)
+
+**For assertions** (`expect(locator).toBeVisible()`):
+- Retries until the condition holds
+- Timeout configurable per assertion
+- Global default: `assertionTimeout` in playwright.config.ts (default 5 s)
+
+## Never use page.waitForTimeout()
+
+```ts
+// ❌ Wrong — arbitrary sleep. Flaky on fast machines, slow on slow ones.
+await page.waitForTimeout(3000);
+await page.click('#submit');
+
+// ✅ Correct — wait for the specific condition you need
+await page.getByRole('button', { name: 'Submit' }).click();
+// auto-wait handles the rest
+```
+
+<Tip>`page.waitForTimeout()` exists for debugging — step through a running test visually. It must never appear in committed test code. Enable the no-wait-for-timeout ESLint rule for Playwright.</Tip>
+
+## Explicit waits — when you need them
+
+Auto-wait covers element readiness. For other async conditions:
+
+```ts
+// Wait for navigation to complete
+await page.waitForURL('**/inventory.html');
+await page.waitForURL(/inventory/);
+
+// Wait for load state
+await page.waitForLoadState('networkidle'); // all network requests settled
+await page.waitForLoadState('domcontentloaded');
+await page.waitForLoadState('load');
+
+// Wait for a specific element to appear
+await page.waitForSelector('[data-testid="success-toast"]');
+// (prefer expect().toBeVisible() — it's the same thing with better error messages)
+
+// Wait for a network response
+const [response] = await Promise.all([
+  page.waitForResponse('**/api/cart'),
+  page.getByRole('button', { name: 'Add to cart' }).click(),
+]);
+expect(response.status()).toBe(200);
+```
+
+## Waiting for network
+
+```ts
+// Intercept and wait for a specific API call
+test('add to cart calls the cart API', async ({ page }) => {
+  // Set up the wait BEFORE triggering the action
+  const cartRequest = page.waitForRequest('**/api/v1/cart');
+
+  await page.getByRole('button', { name: 'Add to cart' }).click();
+
+  const req = await cartRequest;
+  expect(req.method()).toBe('POST');
+});
+
+// Wait for response and check body
+test('cart API returns updated count', async ({ page }) => {
+  const [response] = await Promise.all([
+    page.waitForResponse(r =>
+      r.url().includes('/api/cart') && r.status() === 200
+    ),
+    page.getByRole('button', { name: 'Add to cart' }).click(),
+  ]);
+
+  const body = await response.json();
+  expect(body.count).toBe(1);
+});
+```
+
+## Waitfor patterns reference
+
+<CmdTable rows={[
+  { c: 'page.waitForURL(pattern)', d: 'Wait until URL matches (after navigation)' },
+  { c: 'page.waitForLoadState(state)', d: 'Wait for load/domcontentloaded/networkidle' },
+  { c: 'page.waitForSelector(sel)', d: 'Wait for element in DOM (prefer expect().toBeVisible())' },
+  { c: 'page.waitForResponse(url)', d: 'Wait for HTTP response matching URL or predicate' },
+  { c: 'page.waitForRequest(url)', d: 'Wait for outgoing HTTP request' },
+  { c: 'page.waitForEvent(event)', d: 'Wait for a browser event (dialog, popup, download)' },
+  { c: 'expect(locator).toBeVisible()', d: 'Assertion that retries — preferred over waitForSelector' },
+]} />
+
+## Timeout configuration
+
+```ts
+// playwright.config.ts
+export default defineConfig({
+  use: {
+    actionTimeout: 15_000,     // per action (click, fill, etc.)
+    navigationTimeout: 30_000, // page.goto(), page.waitForURL()
+  },
+  expect: {
+    timeout: 10_000,           // per expect() assertion
+  },
+  timeout: 60_000,             // per test (entire test body)
+});
+```
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="pw-waiting" questions={[
+  {
+    q: "What is auto-wait in Playwright and why does it reduce flakiness?",
+    a: "Auto-wait means Playwright retries every action and assertion until the element is actionable (or the condition holds) or the timeout expires. It eliminates the most common source of flakiness: timing assumptions. Instead of 'wait 2 seconds then click', Playwright waits until the element is actually ready to receive the click.",
+    senior: "Auto-wait is implemented as a polling loop with exponential backoff. It's not event-driven — Playwright repeatedly checks the condition every 100ms or so. The practical implication: auto-wait adds a small latency overhead for already-ready elements (one polling cycle). For performance-critical test suites, tuning actionTimeout down (from 30s to 10s) and fixing tests that rely on long waits reveals flakiness earlier and keeps CI fast."
+  },
+  {
+    q: "When should you use page.waitForResponse() and why must it be set up before the triggering action?",
+    a: "waitForResponse() is for asserting API calls made during a user action — e.g., that clicking 'Add to cart' fires a POST to /api/cart with the right payload. It must be set up before the action because Playwright listens for the response event from the moment of setup. If you set up the wait after the action, the response may have already arrived and been missed.",
+    senior: "The standard pattern is Promise.all([page.waitForResponse(...), locator.click()]). This sets up the listener and triggers the action simultaneously, guaranteeing no race. The alternative — awaiting the waitForResponse before the click — creates a deadlock: you're waiting for a response to a request you haven't triggered yet. Promise.all is the canonical solution."
+  },
+  {
+    q: "Why is page.waitForTimeout() considered an anti-pattern?",
+    a: "waitForTimeout() is an arbitrary sleep. It makes tests slow on fast machines (the wait is unconditional) and flaky on slow machines or under load (the wait may not be long enough). It encodes a timing assumption that will break as soon as the environment changes. Every waitForTimeout() can be replaced with a condition-based wait: expect().toBeVisible(), waitForURL(), waitForResponse(), or waitForLoadState().",
+    senior: "waitForTimeout() is a symptom of not understanding what you're waiting for. The fix is not to increase the timeout — it's to identify the actual condition: is the element loading? Is an API call in flight? Is a CSS animation running? Each condition has the right wait. When engineers cannot identify the condition, they reach for sleep — which is a signal to investigate the application behaviour, not increase the wait."
+  },
+]} />
