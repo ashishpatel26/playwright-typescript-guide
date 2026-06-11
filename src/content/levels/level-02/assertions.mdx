@@ -1,0 +1,197 @@
+---
+title: Assertions
+level: 2
+order: 4
+description: expect() in depth — visible/hidden, text, URL, count, attribute, and soft assertions that don't abort the test on first failure.
+duration: 30 min
+status: complete
+widgets: ['pw-runner', 'quiz']
+practiceSite:
+  name: SauceDemo
+  url: https://www.saucedemo.com
+---
+
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import PwRunner from '../../../components/react/PwRunner';
+import QuizCard from '../../../components/react/QuizCard';
+
+## How expect() works in Playwright
+
+Playwright's `expect()` is not Jest's expect. It is locator-aware and
+**retries automatically** until the assertion passes or the timeout expires.
+
+```ts
+// This retries for up to 5s (configurable) checking visibility
+await expect(page.getByText('Products')).toBeVisible();
+
+// NOT like Jest: does not throw immediately on failure
+// It polls the DOM until the condition is met
+```
+
+This means you can write assertions immediately after an action without
+manual waits — the assertion's retry covers the async UI update.
+
+## Visibility
+
+```ts
+// Element is visible (in DOM + visible in viewport)
+await expect(page.getByRole('button', { name: 'Checkout' })).toBeVisible();
+
+// Element is hidden or detached from DOM
+await expect(page.getByTestId('loading-spinner')).toBeHidden();
+
+// Element is in DOM (even if hidden)
+await expect(page.locator('.modal')).toBeAttached();
+
+// Element is not in DOM at all
+await expect(page.locator('.old-element')).not.toBeAttached();
+```
+
+## Text content
+
+```ts
+// Contains this text (substring match)
+await expect(page.getByRole('heading')).toContainText('Welcome');
+
+// Exact text match
+await expect(page.getByRole('heading')).toHaveText('Welcome back, Alice');
+
+// Match with regex
+await expect(page.getByTestId('item-count')).toHaveText(/\d+ items?/);
+
+// Inner text (all text nodes concatenated)
+const text = await page.getByRole('heading').innerText();
+expect(text).toBe('Welcome back, Alice'); // synchronous — value already retrieved
+```
+
+## URL and navigation
+
+```ts
+// Current URL matches string exactly
+await expect(page).toHaveURL('https://saucedemo.com/inventory.html');
+
+// URL matches regex
+await expect(page).toHaveURL(/inventory/);
+
+// Page title
+await expect(page).toHaveTitle('Swag Labs');
+await expect(page).toHaveTitle(/Swag/);
+```
+
+## Count
+
+```ts
+// Exactly N elements match the locator
+await expect(page.locator('.inventory_item')).toHaveCount(6);
+
+// At least one match
+await expect(page.locator('.notification')).not.toHaveCount(0);
+```
+
+## Attributes and properties
+
+```ts
+// Element has attribute with value
+await expect(page.getByRole('textbox')).toHaveAttribute('placeholder', 'Username');
+await expect(page.getByRole('textbox')).toHaveAttribute('disabled', '');
+
+// CSS class
+await expect(page.getByRole('button', { name: 'Selected' })).toHaveClass(/selected/);
+
+// Input value
+await expect(page.getByLabel('Username')).toHaveValue('standard_user');
+
+// Checkbox state
+await expect(page.getByRole('checkbox', { name: 'Remember me' })).toBeChecked();
+```
+
+## Negation
+
+Every assertion has a `.not` counterpart:
+
+```ts
+await expect(page.getByText('Error')).not.toBeVisible();
+await expect(page.locator('.spinner')).not.toBeAttached();
+await expect(page).not.toHaveURL(/login/);
+```
+
+## Soft assertions
+
+Soft assertions do not abort the test on failure. All soft assertions are
+collected and reported together at the end of the test.
+
+```ts
+test('checkout page summary', async ({ page }) => {
+  await page.goto('/checkout-step-two.html');
+
+  // These collect failures but don't stop the test
+  await expect.soft(page.getByTestId('subtotal')).toHaveText('Item total: $29.99');
+  await expect.soft(page.getByTestId('tax')).toHaveText('Tax: $2.40');
+  await expect.soft(page.getByTestId('total')).toHaveText('Total: $32.39');
+
+  // This hard assertion runs regardless of the soft failures above
+  await expect(page.getByRole('button', { name: 'Finish' })).toBeVisible();
+});
+// If soft assertions fail, the test is marked failed after the test body completes
+```
+
+## Reference
+
+<CmdTable rows={[
+  { c: 'expect(locator).toBeVisible()', d: 'Element visible in viewport' },
+  { c: 'expect(locator).toBeHidden()', d: 'Element hidden or not in DOM' },
+  { c: 'expect(locator).toHaveText(str)', d: 'Exact text match' },
+  { c: 'expect(locator).toContainText(str)', d: 'Substring match' },
+  { c: 'expect(locator).toHaveValue(str)', d: 'Input current value' },
+  { c: 'expect(locator).toHaveCount(n)', d: 'Number of matching elements' },
+  { c: 'expect(locator).toHaveAttribute(k, v)', d: 'HTML attribute value' },
+  { c: 'expect(locator).toBeChecked()', d: 'Checkbox/radio is checked' },
+  { c: 'expect(page).toHaveURL(url)', d: 'Current page URL' },
+  { c: 'expect(page).toHaveTitle(str)', d: 'Page <title> text' },
+  { c: 'expect.soft(...)', d: 'Non-aborting assertion' },
+]} />
+
+## Try it: Assertions simulation
+
+<PwRunner
+  client:only="react"
+  mockPage="inventory.html"
+  label="Assertions — inventory page checks"
+  height={280}
+  starter={`import { test, expect } from '@playwright/test';
+
+test('inventory page assertions', async ({ page }) => {
+  await page.goto('/inventory');
+  await expect(page.getByRole('heading')).toBeVisible();
+  await expect(page.locator('[data-testid^="result-"]')).not.toHaveCount(0);
+});
+`}
+  steps={[
+    { description: 'Navigate to inventory practice page', action: 'navigate', value: 'inventory.html' },
+    { description: 'Expect heading visible', action: 'expect-visible', selector: 'h2' },
+    { description: 'Expect PASS badge present', action: 'expect-visible', selector: '[data-status="PASS"]' },
+    { description: 'Expect FAIL badge present', action: 'expect-visible', selector: '[data-status="FAIL"]' },
+    { description: 'Expect results table visible', action: 'expect-visible', selector: 'table' },
+  ]}
+/>
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="pw-assertions" questions={[
+  {
+    q: "How does Playwright's expect() differ from Jest's expect()?",
+    a: "Playwright's expect() is locator-aware and retries automatically. It polls the DOM condition until it passes or the assertionTimeout (default 5s) expires. Jest's expect() evaluates synchronously at the moment of call. This means in Playwright you do not need to await the element state before asserting — the assertion itself handles the waiting.",
+    senior: "The retry mechanism is implemented via polling with exponential backoff. The default assertionTimeout is 5s but can be configured globally in playwright.config.ts or per-assertion with expect(locator, { timeout: 10_000 }). Understanding this distinction prevents a common anti-pattern: adding page.waitForSelector() before expect() — it's redundant and adds latency without benefit."
+  },
+  {
+    q: "What is the difference between toHaveText() and toContainText()?",
+    a: "toHaveText() matches the full text of the element (or an exact match against the list for multi-element locators). toContainText() matches a substring. For most assertions, toContainText() is more resilient — a heading that reads 'Products (6 items)' passes toContainText('Products') even if the item count changes.",
+    senior: "A common mistake: using toHaveText() on a locator that resolves to multiple elements. With multiple elements, toHaveText() takes an array and checks each element's text against the array in order. This is useful for asserting list content but produces confusing errors when the length doesn't match. Use toHaveCount() first, then toHaveText() with an array, to get clear failure messages."
+  },
+  {
+    q: "When would you use soft assertions and what is their trade-off?",
+    a: "Soft assertions are useful when you want to validate multiple related conditions in a single test run without the first failure masking the rest — e.g., checking all items in a price summary, verifying all form field errors, auditing an entire page for required elements. The trade-off: a soft-assertion failure still marks the test as failed, but the test continues running, potentially causing misleading subsequent failures.",
+    senior: "Overusing soft assertions is an anti-pattern. If your test needs 10 soft assertions to verify a page, you likely have a test that is doing too much. The correct model: one assertion per test scenario. Reserve soft assertions for cases where multiple values must be correct together (financial totals, form validation messages) and the combined assertion forms a single logical check."
+  },
+]} />
