@@ -66,4 +66,14 @@ test.describe('Widget smoke tests', () => {
     await page.goto('levels/4/design-patterns/');
     await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 20000 });
   });
+
+  test('L5 hybrid-ui-api-flows renders with Mermaid diagram', async ({ page }) => {
+    await page.goto('levels/5/hybrid-ui-api-flows/');
+    await expect(page.locator('svg[id^="mmd-"]').first()).toBeVisible({ timeout: 20000 });
+  });
+
+  test('L6 sql-fundamentals renders with quiz', async ({ page }) => {
+    await page.goto('levels/6/sql-fundamentals/');
+    await expect(page.locator('[data-testid="quiz-card"]')).toBeVisible({ timeout: 15000 });
+  });
 });
