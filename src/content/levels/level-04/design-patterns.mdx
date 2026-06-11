@@ -1,0 +1,247 @@
+---
+title: Design Patterns for Test Frameworks
+level: 4
+order: 4
+description: Singleton, Factory, Builder, Strategy, and Dependency Injection — applied to the problems test frameworks actually have.
+duration: 45 min
+status: complete
+widgets: ['ts-playground', 'quiz']
+---
+
+import Tip from '../../../components/astro/Tip.astro';
+import TsPlayground from '../../../components/react/TsPlayground';
+import QuizCard from '../../../components/react/QuizCard';
+
+## Builder — test data without noise
+
+The most used pattern in test frameworks. Defaults plus targeted overrides:
+
+```ts
+interface User {
+  username: string;
+  email: string;
+  role: 'admin' | 'customer';
+  balance: number;
+}
+
+export function buildUser(overrides: Partial<User> = {}): User {
+  return {
+    username: 'standard_user',
+    email: 'user@test.example',
+    role: 'customer',
+    balance: 100,
+    ...overrides,
+  };
+}
+
+// Each test states ONLY what matters to it
+const broke = buildUser({ balance: 0 });
+const admin = buildUser({ role: 'admin' });
+```
+
+For multi-step construction, a class builder:
+
+```ts
+export class OrderBuilder {
+  private items: { sku: string; qty: number }[] = [];
+  private coupon?: string;
+
+  withItem(sku: string, qty = 1): this {
+    this.items.push({ sku, qty });
+    return this;
+  }
+
+  withCoupon(code: string): this {
+    this.coupon = code;
+    return this;
+  }
+
+  build(): Order {
+    return { items: this.items, coupon: this.coupon, createdAt: new Date() };
+  }
+}
+
+const order = new OrderBuilder().withItem('BACKPACK').withCoupon('SAVE10').build();
+```
+
+## Factory — create by name
+
+When tests need "a page object for X" or "a client for environment Y"
+decided at runtime:
+
+```ts
+type Env = 'local' | 'staging' | 'production';
+
+export function createApiClient(env: Env): ApiClient {
+  const baseURLs: Record<Env, string> = {
+    local: 'http://localhost:3000',
+    staging: 'https://staging.api.example.com',
+    production: 'https://api.example.com',
+  };
+  return new ApiClient(baseURLs[env], { retries: env === 'local' ? 0 : 2 });
+}
+```
+
+## Strategy — swap behaviour, keep the flow
+
+One checkout flow, several payment methods. The flow stays identical; the
+payment step is a pluggable strategy:
+
+```ts
+interface PaymentStrategy {
+  pay(page: Page, amount: number): Promise<void>;
+}
+
+const cardPayment: PaymentStrategy = {
+  async pay(page, amount) {
+    await page.getByLabel('Card number').fill('4111111111111111');
+    await page.getByRole('button', { name: 'Pay' }).click();
+  },
+};
+
+const paypalPayment: PaymentStrategy = {
+  async pay(page, amount) {
+    const [popup] = await Promise.all([
+      page.waitForEvent('popup'),
+      page.getByRole('button', { name: 'PayPal' }).click(),
+    ]);
+    // ...handle PayPal popup...
+  },
+};
+
+async function checkoutWith(strategy: PaymentStrategy, page: Page) {
+  // identical flow before and after — only payment varies
+  await strategy.pay(page, 42.99);
+}
+```
+
+## Dependency Injection — fixtures ARE your DI container
+
+Playwright's `test.extend` is a typed DI container with lifecycle management:
+
+```ts
+type Services = {
+  apiClient: ApiClient;
+  testUser: User;
+};
+
+export const test = base.extend<Services>({
+  apiClient: async ({}, use) => {
+    const client = createApiClient(process.env.TEST_ENV as Env ?? 'staging');
+    await use(client);
+    await client.dispose();              // teardown after the test
+  },
+  testUser: async ({ apiClient }, use) => {   // depends on apiClient
+    const user = await apiClient.createUser(buildUser());
+    await use(user);
+    await apiClient.deleteUser(user.username); // cleanup guaranteed
+  },
+});
+```
+
+Declaration order doesn't matter; the dependency graph does. Playwright
+resolves `testUser → apiClient` automatically and tears down in reverse.
+
+## Singleton — the pattern to avoid
+
+```ts
+// ❌ Classic singleton config — hidden global state
+export class Config {
+  private static instance: Config;
+  static get(): Config {
+    if (!Config.instance) Config.instance = new Config();
+    return Config.instance;
+  }
+}
+```
+
+Singletons and parallel workers don't mix: each worker is a separate process,
+so the "single" instance silently becomes N instances — fine until it holds a
+port, a file lock, or mutable state. Playwright already gives you the right
+scopes: `test`-scoped fixtures (per test) and `worker`-scoped fixtures (per
+process). Use those instead.
+
+```ts
+// ✅ Worker-scoped fixture — explicit, typed, parallel-safe
+export const test = base.extend<{}, { dbPool: DbPool }>({
+  dbPool: [async ({}, use) => {
+    const pool = await DbPool.connect(process.env.DB_URL!);
+    await use(pool);
+    await pool.close();
+  }, { scope: 'worker' }],
+});
+```
+
+<Tip>Interview shorthand: Builder for test data, Factory for environment switching, Strategy for variant flows, fixtures for DI, and Singleton is a red flag in parallel test frameworks.</Tip>
+
+## Try it: Builder + Strategy in pure TypeScript
+
+<TsPlayground
+  client:only="react"
+  label="Patterns — Playground"
+  height={420}
+  starter={`// Builder + Strategy, runnable without Playwright
+
+// --- Builder ---
+interface User { username: string; role: 'admin' | 'customer'; balance: number }
+
+function buildUser(overrides: Partial<User> = {}): User {
+  return { username: 'standard_user', role: 'customer', balance: 100, ...overrides };
+}
+
+const admin = buildUser({ role: 'admin' });
+const broke = buildUser({ balance: 0 });
+console.log('admin:', admin.username, '/', admin.role);
+console.log('broke balance:', broke.balance);
+
+// --- Strategy ---
+interface DiscountStrategy {
+  name: string;
+  apply(total: number): number;
+}
+
+const noDiscount: DiscountStrategy = { name: 'none', apply: t => t };
+const tenPercent: DiscountStrategy = { name: '10% off', apply: t => t * 0.9 };
+const fiveFlat: DiscountStrategy = { name: '£5 off', apply: t => Math.max(0, t - 5) };
+
+function checkout(total: number, strategy: DiscountStrategy): string {
+  const final = strategy.apply(total);
+  return \`\${strategy.name}: £\${total} -> £\${final.toFixed(2)}\`;
+}
+
+// Same flow, three behaviours — this is the strategy pattern's value
+[noDiscount, tenPercent, fiveFlat].forEach(s => console.log(checkout(50, s)));
+
+// --- Builder class with chaining ---
+class OrderBuilder {
+  private items: string[] = [];
+  private coupon = '';
+  withItem(sku: string): this { this.items.push(sku); return this; }
+  withCoupon(code: string): this { this.coupon = code; return this; }
+  build() { return { items: this.items, coupon: this.coupon }; }
+}
+
+const order = new OrderBuilder().withItem('BACKPACK').withItem('BIKE-LIGHT').withCoupon('SAVE10').build();
+console.log('order:', order.items.join(' + '), '| coupon:', order.coupon);
+`}
+/>
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="fw-patterns" questions={[
+  {
+    q: "Which design patterns appear most in test frameworks, and for what?",
+    a: "Builder for test data (defaults + overrides), Factory for environment- or browser-dependent object creation, Strategy for variant flows (payment methods, auth providers), and Dependency Injection via Playwright fixtures for wiring page objects, clients, and data with managed lifecycle.",
+    senior: "The pattern I actually review hardest is the Builder, because test data design determines suite maintainability more than any structural pattern. A good builder encodes domain invariants — buildUser can't produce an invalid user — which kills an entire class of 'test data drift' failures. Structural patterns are easy to retrofit; data design debt compounds."
+  },
+  {
+    q: "Why is the Singleton pattern dangerous in a Playwright framework?",
+    a: "Playwright runs tests in parallel worker processes. A singleton is per-process, so 'one instance' silently becomes one per worker — harmless for read-only config, broken for anything holding connections, ports, or mutable state. Playwright's worker-scoped fixtures provide the correct primitive: explicit per-worker lifecycle with typed access and guaranteed teardown.",
+    senior: "The subtle failure: a singleton caching auth tokens works locally (one worker) and falls over in CI (eight workers hammering the token endpoint simultaneously — rate limit, lockout, flaky suite). Process-level parallelism is why patterns from app development need re-evaluation in test frameworks. Fixtures with explicit scope make the concurrency model visible; singletons hide it."
+  },
+  {
+    q: "How does Playwright's fixture system implement dependency injection?",
+    a: "test.extend<T>() declares typed fixtures; each fixture is a function receiving its dependencies (other fixtures) and a use() callback. Tests declare needs in the callback signature, Playwright resolves the dependency graph, constructs in order, and tears down in reverse after use() returns. Setup and cleanup live together, and cleanup runs even on test failure.",
+    senior: "Two properties make it better than DI containers bolted onto other frameworks: laziness — a fixture only constructs if some test in the worker actually requests it — and scope control (test vs worker). The teardown-after-use guarantee also eliminates the afterEach drift problem where cleanup lives far from setup and rots independently."
+  },
+]} />
