@@ -86,4 +86,19 @@ test.describe('Widget smoke tests', () => {
     await page.goto('levels/8/docker-compose/');
     await expect(page.locator('svg[id^="mmd-"]').first()).toBeVisible({ timeout: 20000 });
   });
+
+  test('L9 cloud-grids renders with quiz', async ({ page }) => {
+    await page.goto('levels/9/cloud-grids/');
+    await expect(page.locator('[data-testid="quiz-card"]')).toBeVisible({ timeout: 15000 });
+  });
+
+  test('L10 performance-test-types renders with Mermaid diagram', async ({ page }) => {
+    await page.goto('levels/10/performance-test-types/');
+    await expect(page.locator('svg[id^="mmd-"]').first()).toBeVisible({ timeout: 20000 });
+  });
+
+  test('L11 owasp-top-10 renders with quiz', async ({ page }) => {
+    await page.goto('levels/11/owasp-top-10/');
+    await expect(page.locator('[data-testid="quiz-card"]')).toBeVisible({ timeout: 15000 });
+  });
 });
