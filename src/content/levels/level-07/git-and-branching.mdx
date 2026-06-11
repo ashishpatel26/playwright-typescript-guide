@@ -1,0 +1,133 @@
+---
+title: "Git & Branching Strategies"
+level: 7
+order: 1
+description: "Master Git workflows and branching strategies that support reliable test automation in CI."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Why Git Matters for Test Automation
+
+Tests live in the same repo as source code. Poor Git hygiene causes flaky CI, merge conflicts in test files, and unreviewable PRs. Test automation engineers need fluent Git.
+
+## Essential Git Commands
+
+```bash
+# Status and inspection
+git status                        # what changed
+git log --oneline --graph         # compact history
+git diff HEAD~1                   # diff against last commit
+git show HEAD:e2e/smoke.spec.ts   # file at a specific commit
+
+# Stash — park work in progress
+git stash push -m "wip: fixing login test"
+git stash list
+git stash pop
+
+# Reset — undo staged or committed changes
+git reset HEAD~1 --soft           # undo commit, keep changes staged
+git reset HEAD~1 --mixed          # undo commit, unstage changes
+git restore src/tests/auth.spec.ts # discard file changes
+```
+
+## Branching Strategies
+
+### GitHub Flow (recommended for most teams)
+
+```
+main ──────────────────────────────────────────► production
+      │                             │
+      └─ feature/add-auth-tests ───►│ PR → merge
+```
+
+1. Branch from `main`
+2. Commit tests + implementation together
+3. Open PR — CI runs tests
+4. Merge to `main` only when CI green
+
+### Gitflow (release-heavy projects)
+
+```
+main ─────────────────────────────────► stable releases
+develop ──────────────────────────────► integration branch
+         │                   │
+         └─ feature/tests ──►│ merge to develop
+                              │
+                    release/1.2 ──► hotfix if needed
+```
+
+### Trunk-Based Development (CI/CD optimised)
+
+All developers commit to `main` daily. Feature flags gate incomplete features. Tests must pass on every commit — no long-lived branches.
+
+## Conventional Commits for Tests
+
+```bash
+# Test-specific commit types
+git commit -m "test: add auth flow e2e tests"
+git commit -m "test: fix flaky cart checkout test"
+git commit -m "test: update POM for new nav structure"
+git commit -m "ci: add playwright shard config"
+git commit -m "fix: correct locator for submit button"
+```
+
+## PR Best Practices
+
+```bash
+# Before raising a PR
+git fetch origin main
+git rebase origin/main               # rebase onto latest main
+npx playwright test --project=chromium  # run tests locally
+
+# Squash noisy WIP commits
+git rebase -i origin/main            # interactive squash
+```
+
+**PR checklist for test automation:**
+- Tests pass locally in CI configuration
+- No hardcoded waits (`waitForTimeout`)
+- New tests follow existing naming convention
+- `storageState` / fixtures documented
+- `playwright.config.ts` changes reviewed
+
+## `.gitignore` for Playwright Projects
+
+```gitignore
+# Test outputs
+test-results/
+playwright-report/
+blob-report/
+
+# Auth state (contains cookies — never commit)
+playwright/.auth/
+
+# Environment
+.env
+.env.local
+
+# Build
+dist/
+node_modules/
+```
+
+## Git Hooks for Test Quality
+
+```bash
+# .husky/pre-push — run tests before pushing
+#!/bin/sh
+npx playwright test --project=chromium e2e/smoke.spec.ts
+```
+
+Install: `npm install --save-dev husky && npx husky install`
+
+<QuizCard client:only="react" storageKey="ci-git" questions={[
+  { q: "What is the difference between `git reset --soft HEAD~1` and `git reset --mixed HEAD~1`?", a: "`--soft` undoes the commit but keeps changes staged. `--mixed` (default) undoes the commit and unstages changes. Both preserve the working-tree files." },
+  { q: "Why should `playwright/.auth/` be in `.gitignore`?", a: "Storage state files contain session cookies and tokens — committing them exposes credentials. They're also environment-specific and must be regenerated per machine/CI run." },
+  { q: "What is trunk-based development and why does it demand strong test automation?", a: "All developers commit to `main` daily. No long-lived branches means no integration pain — but also no safety net. Tests must be fast, reliable, and run on every commit to keep trunk green.", senior: "Trunk-based dev only works with feature flags for incomplete features and a test suite that can gate `main` in under 10 minutes." },
+  { q: "How do conventional commit prefixes help a test automation team?", a: "`test:` commits are filterable in git log, distinguishable in changelogs, and signal reviewers that only test code changed (lower risk). Also enables automated release notes." }
+]} />

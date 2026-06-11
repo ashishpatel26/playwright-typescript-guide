@@ -1,0 +1,168 @@
+---
+title: "Reporting & Artifact Management"
+level: 7
+order: 5
+description: "Configure Playwright reporters and manage test artifacts in CI pipelines."
+duration: "25 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Built-In Reporters
+
+```ts
+// playwright.config.ts
+export default defineConfig({
+  reporter: [
+    ['html', { outputFolder: 'playwright-report', open: 'on-failure' }],
+    ['junit', { outputFile: 'test-results/results.xml' }],
+    ['json', { outputFile: 'test-results/results.json' }],
+    ['line'],    // compact console output
+    ['dot'],     // minimal dots per test
+  ],
+});
+```
+
+Mix reporters: `reporter: [['html'], ['junit']]`
+
+## HTML Reporter
+
+The HTML reporter produces a self-contained `index.html` with:
+- Pass/fail counts per file and test
+- Error messages with stack traces
+- Screenshots on failure (if configured)
+- Video recordings (if configured)
+- Traces (if configured — opens in Trace Viewer)
+
+```bash
+# View report locally
+npx playwright show-report playwright-report/
+
+# Generate for specific test run
+npx playwright test --reporter=html
+```
+
+## Trace Viewer
+
+Traces capture the full test execution — DOM snapshots, network calls, console logs, screenshots at each action:
+
+```ts
+// playwright.config.ts
+use: {
+  trace: 'on-first-retry',      // capture on first retry
+  // 'on'                       // always capture
+  // 'off'                      // never capture
+  // 'retain-on-failure'        // keep only on failure
+}
+```
+
+```bash
+# Open a trace file
+npx playwright show-trace test-results/auth-login/trace.zip
+```
+
+## Allure Reporter
+
+Rich third-party reporter with history, trends, and categories:
+
+```bash
+npm install --save-dev allure-playwright
+```
+
+```ts
+reporter: [['allure-playwright', {
+  detail: true,
+  outputFolder: 'allure-results',
+  suiteTitle: false,
+}]],
+```
+
+```bash
+# Generate and open Allure report
+npx allure generate allure-results --clean
+npx allure open
+```
+
+## CI Artifact Management
+
+### GitHub Actions
+
+```yaml
+- uses: actions/upload-artifact@v4
+  if: always()
+  with:
+    name: playwright-report-${{ github.run_id }}
+    path: |
+      playwright-report/
+      test-results/**/*.zip       # traces
+    retention-days: 30
+```
+
+### Artifact Naming Strategy
+
+```
+playwright-report-<run-id>/        # unique per run — no collisions
+test-results-shard-1/              # per shard on matrix runs
+allure-report-<branch>-<sha>/      # branch + commit for traceability
+```
+
+## Custom Reporter
+
+```ts
+// reporters/slack-reporter.ts
+import { Reporter, TestCase, TestResult } from '@playwright/test/reporter';
+
+class SlackReporter implements Reporter {
+  private failed: string[] = [];
+
+  onTestEnd(test: TestCase, result: TestResult) {
+    if (result.status === 'failed') {
+      this.failed.push(test.title);
+    }
+  }
+
+  async onEnd() {
+    if (this.failed.length > 0) {
+      await fetch(process.env.SLACK_WEBHOOK!, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: `❌ ${this.failed.length} test(s) failed:\n${this.failed.join('\n')}`,
+        }),
+      });
+    }
+  }
+}
+
+export default SlackReporter;
+```
+
+```ts
+// playwright.config.ts
+reporter: [['html'], ['./reporters/slack-reporter.ts']],
+```
+
+## Reporter Selection by Environment
+
+```ts
+reporter: process.env.CI
+  ? [
+      ['blob'],                          // for shard merging
+      ['github'],                        // PR annotations
+      ['junit', { outputFile: 'results.xml' }],
+    ]
+  : [
+      ['html', { open: 'on-failure' }],  // opens browser on failure
+      ['line'],                          // compact console
+    ],
+```
+
+<QuizCard client:only="react" storageKey="ci-reporting" questions={[
+  { q: "What does `trace: 'on-first-retry'` capture and when is it most useful?", a: "Captures DOM snapshots, network requests, console logs, and screenshots for every action in a test. Most useful for investigating flaky tests — the trace shows exactly what happened on the failing retry." },
+  { q: "Why use `if: always()` on artifact upload steps in GitHub Actions?", a: "Without it, the upload step is skipped when the test step fails — you lose the report exactly when you need it most. `if: always()` ensures upload happens regardless of test outcome." },
+  { q: "What is the blob reporter and when do you use it instead of HTML?", a: "Blob reporter writes a binary file per shard. Use it when sharding across CI machines — each shard writes its blob, then `playwright merge-reports` combines them into one HTML report." },
+  { q: "How would you implement a custom reporter that posts failures to Slack?", a: "Implement the `Reporter` interface, collect failed test titles in `onTestEnd`, then send a Slack webhook POST in `onEnd`. Register via `reporter: [['./reporters/slack-reporter.ts']]` in config." }
+]} />

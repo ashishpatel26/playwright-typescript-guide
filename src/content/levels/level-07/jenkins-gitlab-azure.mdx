@@ -1,0 +1,200 @@
+---
+title: "Jenkins, GitLab CI & Azure DevOps"
+level: 7
+order: 3
+description: "Configure Playwright test pipelines across Jenkins, GitLab CI, and Azure DevOps."
+duration: "35 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## CI Platform Comparison
+
+| Platform | Config file | Runners | Best for |
+|---|---|---|---|
+| GitHub Actions | `.github/workflows/*.yml` | GitHub-hosted or self-hosted | Open source, GitHub repos |
+| GitLab CI | `.gitlab-ci.yml` | GitLab runners | GitLab repos, on-prem |
+| Jenkins | `Jenkinsfile` | Jenkins agents | Legacy enterprise, flexible |
+| Azure DevOps | `azure-pipelines.yml` | Microsoft-hosted or self-hosted | Microsoft stack, enterprise |
+| CircleCI | `.circleci/config.yml` | CircleCI cloud or self-hosted | Orbs ecosystem |
+
+## Jenkins Pipeline
+
+```groovy
+// Jenkinsfile (Declarative Pipeline)
+pipeline {
+  agent {
+    docker {
+      image 'mcr.microsoft.com/playwright:v1.45.0-jammy'
+      args '-u root'
+    }
+  }
+
+  environment {
+    BASE_URL = credentials('staging-base-url')
+    API_KEY  = credentials('api-key-secret')
+  }
+
+  stages {
+    stage('Install') {
+      steps {
+        sh 'npm ci'
+      }
+    }
+
+    stage('Test') {
+      steps {
+        sh 'npx playwright test --reporter=junit'
+      }
+      post {
+        always {
+          junit 'test-results/*.xml'
+          publishHTML(target: [
+            reportDir: 'playwright-report',
+            reportFiles: 'index.html',
+            reportName: 'Playwright Report',
+          ])
+        }
+      }
+    }
+  }
+}
+```
+
+## GitLab CI
+
+```yaml
+# .gitlab-ci.yml
+image: mcr.microsoft.com/playwright:v1.45.0-jammy
+
+stages:
+  - test
+
+variables:
+  BASE_URL: $STAGING_URL    # set in GitLab CI/CD → Variables
+
+playwright:
+  stage: test
+  script:
+    - npm ci
+    - npx playwright test
+  artifacts:
+    when: always
+    paths:
+      - playwright-report/
+    expire_in: 7 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+```
+
+**GitLab-specific tips:**
+- `when: always` uploads artifacts even on failure
+- `rules:` replaces `only:/except:` (modern syntax)
+- Variables set in **Settings → CI/CD → Variables** (masked/protected)
+
+## Azure DevOps
+
+```yaml
+# azure-pipelines.yml
+trigger:
+  branches:
+    include:
+      - main
+      - 'feature/*'
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  BASE_URL: $(StagingBaseUrl)    # set in Pipeline → Variables
+
+steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '20.x'
+
+  - script: npm ci
+    displayName: Install dependencies
+
+  - script: npx playwright install --with-deps chromium
+    displayName: Install Playwright browsers
+
+  - script: npx playwright test --reporter=junit
+    displayName: Run Playwright tests
+    env:
+      BASE_URL: $(BASE_URL)
+      API_KEY: $(ApiKeySecret)   # secret variable
+
+  - task: PublishTestResults@2
+    condition: always()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: 'test-results/*.xml'
+
+  - task: PublishPipelineArtifact@1
+    condition: always()
+    inputs:
+      targetPath: playwright-report
+      artifact: playwright-report
+```
+
+## CircleCI
+
+```yaml
+# .circleci/config.yml
+version: 2.1
+
+orbs:
+  node: circleci/node@5
+
+jobs:
+  playwright:
+    docker:
+      - image: mcr.microsoft.com/playwright:v1.45.0-jammy
+    steps:
+      - checkout
+      - node/install-packages:
+          pkg-manager: npm
+      - run:
+          name: Run Playwright tests
+          command: npx playwright test
+      - store_artifacts:
+          path: playwright-report
+      - store_test_results:
+          path: test-results
+
+workflows:
+  test:
+    jobs:
+      - playwright
+```
+
+## Cross-Platform Essentials
+
+```yaml
+# All platforms: use the official Playwright Docker image
+image: mcr.microsoft.com/playwright:v1.45.0-jammy
+
+# Never install browsers without --with-deps on Linux
+npx playwright install --with-deps chromium
+
+# JUnit reporter for native test result integration
+npx playwright test --reporter=junit,html
+
+# Environment variables — never hardcode
+# Jenkins: credentials()
+# GitLab: $VARIABLE_NAME
+# Azure: $(VariableName)
+# GitHub: ${{ secrets.SECRET_NAME }}
+```
+
+<QuizCard client:only="react" storageKey="ci-jenkins" questions={[
+  { q: "Why use `mcr.microsoft.com/playwright` Docker image in CI rather than installing browsers manually?", a: "The image includes all browser dependencies (libX11, libnss3, etc.) pre-installed. Manual `playwright install` on a bare Ubuntu runner fails if system deps are missing — `--with-deps` helps but is slower." },
+  { q: "How do you pass secrets to a Jenkins pipeline without hardcoding them?", a: "Use `credentials()` in the `environment` block: `API_KEY = credentials('jenkins-secret-id')`. Jenkins injects the value from Credentials Manager — masked in logs." },
+  { q: "What is the GitLab CI equivalent of GitHub Actions `if: always()`?", a: "`when: always` on an `artifacts:` block. Uploads artifacts regardless of job success/failure — critical for uploading test reports when tests fail." },
+  { q: "Why is JUnit reporter format universally useful in CI?", a: "Every major CI platform (Jenkins, Azure DevOps, GitLab, CircleCI) has native JUnit XML ingestion — shows pass/fail counts, test names, and durations in the CI UI without reading raw logs.", senior: "Use `--reporter=junit,html` to get both: JUnit for CI integration, HTML for human review." }
+]} />

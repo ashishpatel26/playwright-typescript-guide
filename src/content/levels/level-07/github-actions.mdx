@@ -1,0 +1,182 @@
+---
+title: "GitHub Actions for Playwright"
+level: 7
+order: 2
+description: "Configure GitHub Actions to run Playwright tests on every push and pull request."
+duration: "40 min"
+status: complete
+widgets:
+  - diagram
+  - quiz
+---
+
+import MermaidDiagram from '../../../components/react/MermaidDiagram';
+import QuizCard from '../../../components/react/QuizCard';
+
+## CI Pipeline Flow
+
+<MermaidDiagram client:only="react" chart={`flowchart LR\n  A["Push / PR"] --> B["Checkout code"]\n  B --> C["Install dependencies"]\n  C --> D["Install Playwright browsers"]\n  D --> E["Run Playwright tests"]\n  E --> F{Pass?}\n  F -->|Yes| G["Upload report artifact"]\n  F -->|No| H["Upload failure traces"]\n  G --> I["✅ PR unblocked"]\n  H --> J["❌ PR blocked"]\n  style E stroke:#F05133\n  style G stroke:#7EE787\n  style H stroke:#FF6B6B`} />
+
+## Basic Playwright Workflow
+
+```yaml
+# .github/workflows/playwright.yml
+name: Playwright Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        run: npx playwright test
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
+```
+
+## Sharded CI (Parallel Across Machines)
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]    # 4 machines in parallel
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: 'npm' }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      - name: Run shard
+        run: npx playwright test --shard=${{ matrix.shard }}/4
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: blob-report-${{ matrix.shard }}
+          path: blob-report/
+
+  merge-reports:
+    needs: test
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: 'npm' }
+      - run: npm ci
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: all-blob-reports
+          pattern: blob-report-*
+          merge-multiple: true
+
+      - name: Merge reports
+        run: npx playwright merge-reports --reporter html ./all-blob-reports
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: html-report
+          path: playwright-report/
+```
+
+## Environment Variables and Secrets
+
+```yaml
+env:
+  CI: true                          # Playwright detects CI — disables video by default
+
+steps:
+  - name: Run tests
+    run: npx playwright test
+    env:
+      BASE_URL: ${{ vars.STAGING_URL }}          # GitHub Variable (non-secret)
+      API_KEY: ${{ secrets.API_KEY }}            # GitHub Secret (masked in logs)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+```
+
+Store secrets: **Repo → Settings → Secrets and variables → Actions**
+
+## Caching Playwright Browsers
+
+```yaml
+- name: Cache Playwright binaries
+  uses: actions/cache@v4
+  id: playwright-cache
+  with:
+    path: ~/.cache/ms-playwright
+    key: playwright-${{ hashFiles('package-lock.json') }}
+
+- name: Install browsers (only on cache miss)
+  if: steps.playwright-cache.outputs.cache-hit != 'true'
+  run: npx playwright install --with-deps chromium
+```
+
+Saves ~60 seconds per run once cached.
+
+## Playwright Config for CI
+
+```ts
+// playwright.config.ts
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  workers: process.env.CI ? 2 : undefined,    // fewer workers in CI
+  retries: process.env.CI ? 2 : 0,            // retry flaky tests in CI
+  reporter: process.env.CI
+    ? [['blob'], ['github']]                   // github reporter adds PR annotations
+    : [['html', { open: 'on-failure' }]],
+  use: {
+    baseURL: process.env.BASE_URL ?? 'http://localhost:4321',
+    trace: 'on-first-retry',
+    video: 'on-first-retry',
+    screenshot: 'only-on-failure',
+  },
+});
+```
+
+## GitHub PR Annotations
+
+With `reporter: 'github'`, failed tests appear inline on the PR diff — no need to read logs:
+
+```
+❌ e2e/auth.spec.ts:42 — login with valid credentials
+   Error: expect(locator).toBeVisible() ...
+```
+
+<QuizCard client:only="react" storageKey="ci-gha" questions={[
+  { q: "Why use `npm ci` instead of `npm install` in CI?", a: "`npm ci` installs exact versions from `package-lock.json`, fails if lock file doesn't match `package.json`, and never updates the lock file — reproducible builds every time." },
+  { q: "What does `if: always()` do on an artifact upload step?", a: "Uploads the artifact even if the test step failed. Without it, failure stops the job before upload — you'd lose the HTML report and traces when you need them most." },
+  { q: "How does Playwright's blob reporter enable parallel shard merging?", a: "Each shard writes a binary blob report. The `merge-reports` command combines all blobs into a single HTML report after all shards complete — gives one unified view across machines." },
+  { q: "What CI-specific Playwright settings should be different from local dev?", a: "`retries: 2` (handle flakiness), `workers: 2` (avoid resource contention), `trace: 'on-first-retry'` (capture on failure), `reporter: 'github'` (PR annotations). Also `video/screenshot` only on failure.", senior: "Never set `retries` locally — it hides flaky tests during development. Let CI catch them, then fix the root cause before increasing retry count." }
+]} />

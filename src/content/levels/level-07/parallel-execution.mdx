@@ -1,0 +1,146 @@
+---
+title: "Parallel Execution & Sharding"
+level: 7
+order: 4
+description: "Speed up Playwright suites with workers, projects, and CI sharding across machines."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Parallelism Levels
+
+Playwright has three parallelism layers:
+
+| Level | Config | Where |
+|---|---|---|
+| Workers (threads) | `workers: N` | Single machine |
+| Projects | `projects: [...]` | Cross-browser / multi-config |
+| Sharding | `--shard=N/M` | Multiple CI machines |
+
+## Workers (Intra-Machine)
+
+```ts
+// playwright.config.ts
+export default defineConfig({
+  workers: process.env.CI ? 2 : '50%',  // CI: fixed 2; local: half CPU cores
+  fullyParallel: true,                   // tests within a file run in parallel
+});
+```
+
+**Isolation requirement:** Each worker gets a fresh browser context. Tests must not share state via module-level variables — use fixtures.
+
+```ts
+// ❌ Shared state — breaks parallel execution
+let page: Page;
+test.beforeAll(async ({ browser }) => { page = await browser.newPage(); });
+test('test 1', async () => { /* uses shared page */ });
+
+// ✅ Fixture-isolated
+test('test 1', async ({ page }) => { /* fresh page per test */ });
+```
+
+## `test.describe.configure`
+
+Force serial execution for a test group that shares state:
+
+```ts
+test.describe.configure({ mode: 'serial' });
+
+test.describe('shopping cart flow', () => {
+  test('add item', async ({ page }) => { /* ... */ });
+  test('checkout',  async ({ page }) => { /* ... */ });
+  test('confirm',   async ({ page }) => { /* ... */ });
+});
+```
+
+Use sparingly — prefer stateless tests.
+
+## Projects (Cross-Browser)
+
+```ts
+export default defineConfig({
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox',  use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit',   use: { ...devices['Desktop Safari'] } },
+    { name: 'mobile',   use: { ...devices['iPhone 14'] } },
+  ],
+});
+```
+
+Run a single project: `npx playwright test --project=chromium`
+
+## Sharding (Inter-Machine CI)
+
+Split the test suite across N CI machines:
+
+```bash
+# Machine 1
+npx playwright test --shard=1/4 --reporter=blob
+
+# Machine 2
+npx playwright test --shard=2/4 --reporter=blob
+
+# Machine 3
+npx playwright test --shard=3/4 --reporter=blob
+
+# Machine 4
+npx playwright test --shard=4/4 --reporter=blob
+
+# After all machines: merge blob reports
+npx playwright merge-reports --reporter html ./blob-reports/
+```
+
+Playwright distributes tests evenly by file. A 400-test suite with 4 shards ≈ 100 tests per shard.
+
+## Estimating Parallelism ROI
+
+```
+Serial time   = sum(test durations) = 400 tests × 2 s = 800 s
+Workers × 4   = 800 / 4 = 200 s per machine
+Shards × 4    = 200 / 4 = 50 s total (+ startup overhead ~30 s)
+
+Result: 800 s → ~80 s (10× improvement)
+```
+
+**Diminishing returns:** >8 workers per machine causes browser memory pressure. Profile before adding more.
+
+## `--grep` for Selective Runs
+
+```bash
+# Run only smoke tests
+npx playwright test --grep "@smoke"
+
+# Exclude slow tests
+npx playwright test --grep-invert "@slow"
+
+# Tag tests
+test('critical login flow @smoke', async ({ page }) => { /* ... */ });
+```
+
+## Timeout Tuning
+
+```ts
+export default defineConfig({
+  timeout: 30_000,                 // per-test timeout (default: 30 s)
+  expect: { timeout: 5_000 },      // per-assertion timeout (default: 5 s)
+  globalTimeout: 600_000,          // whole suite timeout (default: none)
+});
+
+// Override per test
+test('slow migration test', async ({ page }) => {
+  test.setTimeout(120_000);
+  // ...
+});
+```
+
+<QuizCard client:only="react" storageKey="ci-parallel" questions={[
+  { q: "What is the difference between Playwright workers and sharding?", a: "Workers run tests in parallel on ONE machine (threads). Sharding splits the suite across MULTIPLE CI machines. Use workers for local speed, sharding for CI scale." },
+  { q: "Why must parallel tests avoid module-level shared state?", a: "Multiple workers execute concurrently. A module-level variable mutated by test A can affect test B running simultaneously in the same worker process. Use `page`/`context` fixtures — each test gets its own fresh instance." },
+  { q: "When should you use `test.describe.configure({ mode: 'serial' })`?", a: "Only for tests that model a stateful flow (wizard, multi-step checkout) where earlier steps are preconditions for later ones. Prefer stateless tests wherever possible — serial blocks can't be parallelised." },
+  { q: "How does blob reporter enable sharded report merging?", a: "Each shard writes a compact binary blob. `playwright merge-reports` reads all blobs and outputs a single HTML report. This is the only way to get a unified view when tests ran on separate machines." }
+]} />
