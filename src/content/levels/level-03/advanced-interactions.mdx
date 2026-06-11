@@ -1,0 +1,181 @@
+---
+title: Advanced Interactions
+level: 3
+order: 3
+description: File upload and download, drag and drop, geolocation, permissions, and browser dialogs — the interactions beyond click and fill.
+duration: 35 min
+status: complete
+widgets: ['quiz']
+practiceSite:
+  name: The Internet
+  url: https://the-internet.herokuapp.com
+---
+
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import QuizCard from '../../../components/react/QuizCard';
+
+## File upload
+
+```ts
+// Direct: set files on the <input type="file">
+await page.getByLabel('Upload CV').setInputFiles('fixtures/cv.pdf');
+
+// Multiple files
+await page.getByLabel('Photos').setInputFiles([
+  'fixtures/photo1.jpg',
+  'fixtures/photo2.jpg',
+]);
+
+// From memory — no file on disk needed
+await page.getByLabel('Upload').setInputFiles({
+  name: 'report.csv',
+  mimeType: 'text/csv',
+  buffer: Buffer.from('id,name\n1,Alice'),
+});
+
+// Clear selection
+await page.getByLabel('Upload').setInputFiles([]);
+```
+
+When the input is hidden behind a styled button that opens the OS dialog:
+
+```ts
+// The OS file dialog cannot be automated — intercept the chooser instead
+const [chooser] = await Promise.all([
+  page.waitForEvent('filechooser'),
+  page.getByRole('button', { name: 'Browse files' }).click(),
+]);
+await chooser.setFiles('fixtures/cv.pdf');
+```
+
+## File download
+
+```ts
+test('export downloads a CSV', async ({ page }) => {
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Export CSV' }).click(),
+  ]);
+
+  expect(download.suggestedFilename()).toBe('orders.csv');
+
+  // Save somewhere stable and verify content
+  const path = await download.path();
+  const content = await fs.promises.readFile(path!, 'utf-8');
+  expect(content).toContain('order_id');
+});
+```
+
+<Tip>The Promise.all listener-before-trigger pattern appears again — downloads, popups, dialogs, file choosers, and network waits all use it. Learn it once, apply it everywhere.</Tip>
+
+## Drag and drop
+
+```ts
+// High-level — works for HTML5 drag events
+await page.getByText('Column A').dragTo(page.getByText('Column B'));
+
+// Manual mouse control — for pointer-event libraries (Sortable.js, dnd-kit)
+const source = page.getByTestId('card-1');
+const target = page.getByTestId('done-column');
+
+const from = await source.boundingBox();
+const to = await target.boundingBox();
+
+await page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height / 2);
+await page.mouse.down();
+await page.mouse.move(to!.x + to!.width / 2, to!.y + to!.height / 2, { steps: 10 });
+await page.mouse.up();
+```
+
+`steps: 10` emits intermediate mousemove events — many drag libraries ignore
+a single instant jump.
+
+## Geolocation
+
+```ts
+test.use({
+  geolocation: { latitude: 51.5074, longitude: -0.1278 }, // London
+  permissions: ['geolocation'],
+});
+
+test('map centres on my location', async ({ page }) => {
+  await page.goto('https://www.openstreetmap.org');
+  await page.getByRole('button', { name: 'Show My Location' }).click();
+  await expect(page).toHaveURL(/map=.*51\.50/);
+});
+
+// Change location mid-test (simulate movement)
+await context.setGeolocation({ latitude: 48.8566, longitude: 2.3522 }); // Paris
+```
+
+## Permissions
+
+```ts
+// Grant upfront via context options or test.use
+test.use({ permissions: ['clipboard-read', 'notifications'] });
+
+// Grant later, scoped to an origin
+await context.grantPermissions(['camera'], { origin: 'https://meet.example.com' });
+
+// Revoke everything
+await context.clearPermissions();
+```
+
+Without a grant, the browser would show a permission prompt — which
+Playwright cannot click, because it's browser UI, not page content. Grant
+permissions instead of trying to handle prompts.
+
+## Dialogs: alert, confirm, prompt
+
+```ts
+// Dialogs are auto-DISMISSED by default. Register a handler to accept:
+page.on('dialog', async dialog => {
+  expect(dialog.type()).toBe('confirm');
+  expect(dialog.message()).toContain('Delete this item?');
+  await dialog.accept();
+});
+
+await page.getByRole('button', { name: 'Delete' }).click();
+```
+
+## Reference
+
+<CmdTable rows={[
+  { c: 'locator.setInputFiles(path)', d: 'Upload file(s) to input[type=file]' },
+  { c: 'page.waitForEvent(\'filechooser\')', d: 'Intercept OS file dialog' },
+  { c: 'page.waitForEvent(\'download\')', d: 'Capture a triggered download' },
+  { c: 'download.path()', d: 'Temp path of downloaded file' },
+  { c: 'locator.dragTo(target)', d: 'HTML5 drag and drop' },
+  { c: 'page.mouse.move/down/up', d: 'Manual drag for pointer-event libraries' },
+  { c: 'context.setGeolocation(coords)', d: 'Set or change GPS position' },
+  { c: 'context.grantPermissions([...])', d: 'Grant browser permissions (no prompt)' },
+  { c: 'page.on(\'dialog\', handler)', d: 'Handle alert/confirm/prompt' },
+]} />
+
+## Practice on The Internet
+
+1. `/upload` — upload a file via `setInputFiles`, assert the success message.
+2. `/download` — capture a download and verify its filename.
+3. `/drag_and_drop` — swap boxes A and B; try `dragTo` first, fall back to manual mouse.
+4. `/javascript_alerts` — accept a confirm dialog and assert the result text.
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="pw-adv-interactions" questions={[
+  {
+    q: "How do you test file upload when clicking the button opens the OS file dialog?",
+    a: "Playwright cannot automate OS dialogs — they're outside the browser page. Intercept the filechooser event instead: Promise.all([page.waitForEvent('filechooser'), button.click()]), then chooser.setFiles(path). If the underlying input[type=file] is reachable, setInputFiles() on it directly is simpler and skips the dialog entirely.",
+    senior: "Prefer setInputFiles on the input even when it's visually hidden — it's faster and less brittle. The filechooser route is for cases where the input is created dynamically on click. Also worth knowing: setInputFiles accepts in-memory buffers, so test fixtures don't need to exist on disk — useful in CI where you generate test files programmatically."
+  },
+  {
+    q: "Why might dragTo() fail on a modern drag-and-drop library, and what's the fix?",
+    a: "dragTo() dispatches HTML5 drag events (dragstart/dragover/drop). Libraries built on pointer events — Sortable.js, dnd-kit, react-beautiful-dnd — don't listen for those. The fix is manual mouse simulation: mouse.move to source, mouse.down, mouse.move to target with the steps option, mouse.up.",
+    senior: "The steps option is the non-obvious part: many libraries activate drag only after several mousemove events or a distance threshold, so a single-jump move does nothing. Ten steps is a good default. If it still fails, open the page in headed mode and watch — some libraries also need a small initial movement delay, which you simulate with a mouse.move of a few pixels before the long move."
+  },
+  {
+    q: "How do you handle a JavaScript confirm() dialog in Playwright?",
+    a: "Register page.on('dialog') before triggering it, and call dialog.accept() or dialog.dismiss() in the handler. Without a handler, Playwright auto-dismisses dialogs so tests don't hang. You can also assert dialog.message() and dialog.type() inside the handler.",
+    senior: "Auto-dismissal is a deliberate design choice and a common source of confusion when porting from Selenium, which blocks on dialogs. One trap: registering the handler but forgetting it fires for every subsequent dialog — use page.once() for a single expected dialog so a later unexpected one still gets auto-dismissed and surfaces as a behavioural difference."
+  },
+]} />
