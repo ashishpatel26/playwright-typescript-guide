@@ -1,0 +1,126 @@
+---
+title: Clean Code — DRY, KISS, YAGNI
+level: 4
+order: 6
+description: The three principles that keep test code honest — and the test-specific places where DRY is actually wrong.
+duration: 25 min
+status: complete
+widgets: ['quiz']
+---
+
+import Tip from '../../../components/astro/Tip.astro';
+import QuizCard from '../../../components/react/QuizCard';
+
+## DRY — and where it's wrong in tests
+
+Don't Repeat Yourself applies to **mechanisms**, not **facts under test**.
+
+```ts
+// ✅ DRY the mechanism: login repeated in 40 tests → setup project / fixture
+// ✅ DRY the locators: one page object per page
+// ✅ DRY the data shape: buildUser() instead of inline literals
+
+// ❌ Do NOT dry the assertion values
+const EXPECTED_TOTAL = calculateTotal(ITEMS); // mirror of production logic!
+expect(await cart.total()).toBe(EXPECTED_TOTAL);
+
+// ✅ Assert the literal fact
+expect(await cart.total()).toBe('$32.39');
+```
+
+If the test computes its expectation with the same logic as production, a
+bug in that logic passes both. Tests exist to state facts independently —
+some duplication between tests is the point, not a smell.
+
+```ts
+// Also fine: similar-looking tests that differ in one meaningful value.
+// A parametrised table keeps them honest without abstraction:
+for (const { user, error } of [
+  { user: 'locked_out_user', error: 'locked out' },
+  { user: 'invalid_user', error: 'do not match' },
+]) {
+  test(`login fails for ${user}`, async ({ loginPage, page }) => {
+    await loginPage.signIn(user, 'secret_sauce');
+    await expect(page.getByTestId('error')).toContainText(error);
+  });
+}
+```
+
+## KISS — the reader is debugging at 2am
+
+Test code is read most often during a CI failure, by someone who didn't
+write it, under time pressure. Optimise for that reader.
+
+```ts
+// ❌ Clever: generic everything
+await runFlow(flows.get(ctx.flowType)!, dataFor(ctx), { retry: policy(ctx) });
+
+// ✅ Simple: boring and traceable
+await loginPage.signIn('standard_user', 'secret_sauce');
+await inventoryPage.addToCart('Sauce Labs Backpack');
+await checkoutPage.complete(shippingInfo);
+```
+
+KISS rules of thumb for tests:
+
+- A failed test's cause should be findable from the test body alone.
+- Three levels of indirection (test → flow → page) is the ceiling.
+- A conditional in a test body is a smell — split into two tests.
+- No loops over assertions where a table-driven test would name each case.
+
+## YAGNI — frameworks rot from speculation
+
+You Aren't Gonna Need It hits test frameworks hardest, because frameworks
+are infrastructure and infrastructure invites gold-plating.
+
+Classic speculative framework features that rot unused:
+
+- Multi-browser abstraction layer "in case we leave Playwright"
+- Config system supporting 12 environments when CI uses 2
+- Custom reporter framework before anyone asked for a report
+- Generic `BaseTest` with hooks nobody overrides
+- Retry/backoff wrappers around Playwright's own auto-wait
+
+```ts
+// ❌ Speculative generality
+class BasePage<T extends PageConfig, U extends WaitStrategy> { /* ... */ }
+
+// ✅ What today's tests need
+class LoginPage { /* constructor(page), signIn(), error() */ }
+```
+
+The rule: extract abstraction **after** the third concrete use, not before
+the first. Duplication is cheaper than the wrong abstraction.
+
+<Tip>The three principles rank-ordered for test code: KISS first (debuggability is the product), YAGNI second (frameworks attract speculation), DRY last — and never DRY the facts being asserted.</Tip>
+
+## A review checklist
+
+| Question | Principle |
+|---|---|
+| Can I find the failure cause from the test body alone? | KISS |
+| Does any assertion compute its expected value? | DRY (misapplied) |
+| Is there an abstraction with exactly one consumer? | YAGNI |
+| Does a conditional branch the test's behaviour? | KISS |
+| Did a locator change touch more than one file? | DRY (correctly applied) |
+| Is there a base class with empty/overridden-away methods? | YAGNI + Liskov |
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="fw-clean" questions={[
+  {
+    q: "Where does DRY not apply in test code?",
+    a: "Expected values. If a test computes its expectation using logic mirrored from production, a bug in that logic passes both sides — the test proves nothing. Assert literal facts ('$32.39'), even when that repeats across tests. DRY the mechanisms (login, locators, data builders), never the facts under test.",
+    senior: "The deeper version: tests are specifications, and specifications gain value from being concrete and independent. When I see expectedTotal = items.reduce(...) in a test, that's a reimplementation of the system under test — the test now verifies that two copies of the same algorithm agree. Table-driven tests with literal expected values get the conciseness people wanted from DRY without the circularity."
+  },
+  {
+    q: "Why is KISS weighted more heavily in test code than in application code?",
+    a: "Because test code's primary read context is failure triage: someone who didn't write it, debugging a red CI run, often under release pressure. Application code is read during development; test code during incidents. Every layer of cleverness — generic runners, dynamic flows, conditional assertions — adds minutes to every future triage.",
+    senior: "I measure this concretely as time-to-diagnosis: from 'test failed' to 'I know the cause'. Well-factored boring tests get there from the failure message and test body alone. The pattern I ban outright is conditionals in test bodies — a test that branches is N tests wearing one name, and its failure tells you nothing about which path broke."
+  },
+  {
+    q: "Give examples of YAGNI violations specific to test frameworks.",
+    a: "Tool-agnostic abstraction layers ('in case we switch from Playwright'), config for environments that don't exist, custom retry wrappers duplicating Playwright's auto-wait, BaseTest classes with unused hooks, reporter frameworks before reporting requirements. Each adds maintenance surface while delivering nothing today.",
+    senior: "The driver-abstraction layer is the canonical one: teams wrap every Playwright call in their own interface for a migration that never comes, and the wrapper lags the real API forever — they paid for portability with permanent feature lag. My heuristic: abstraction must be justified by a concrete second use that exists today, not by a hypothetical. Extract on the third use, tolerate duplication until then."
+  },
+]} />
