@@ -1,0 +1,194 @@
+---
+title: Your First Playwright Test
+level: 2
+order: 1
+description: Install Playwright, understand playwright.config.ts, and write a test that runs in Chromium, Firefox, and WebKit simultaneously.
+duration: 30 min
+status: complete
+widgets: ['quiz']
+practiceSite:
+  name: SauceDemo
+  url: https://www.saucedemo.com
+---
+
+import CodeTabs from '../../../components/astro/CodeTabs.astro';
+import CmdTable from '../../../components/astro/CmdTable.astro';
+import Tip from '../../../components/astro/Tip.astro';
+import QuizCard from '../../../components/react/QuizCard';
+
+## Installation
+
+```bash
+# In an existing Node.js project
+npm init playwright@latest
+
+# Scaffolds: playwright.config.ts, tests/example.spec.ts,
+# tests-examples/, .github/workflows/playwright.yml
+# Installs: @playwright/test + browser binaries
+```
+
+```bash
+# Install browsers separately (if already have @playwright/test)
+npx playwright install
+
+# Install specific browser
+npx playwright install chromium
+```
+
+<CmdTable rows={[
+  { c: 'npx playwright test', d: 'Run all tests' },
+  { c: 'npx playwright test --headed', d: 'Run with visible browser' },
+  { c: 'npx playwright test --ui', d: 'Open Playwright UI mode (interactive debugger)' },
+  { c: 'npx playwright test login.spec.ts', d: 'Run one file' },
+  { c: 'npx playwright test --grep "login"', d: 'Run tests matching a pattern' },
+  { c: 'npx playwright show-report', d: 'Open last HTML report' },
+  { c: 'npx playwright codegen https://saucedemo.com', d: 'Record interactions as test code' },
+]} />
+
+## The anatomy of a Playwright test
+
+```ts
+import { test, expect } from '@playwright/test';
+
+test('page title matches', async ({ page }) => {
+  // Arrange: navigate to the page
+  await page.goto('https://www.saucedemo.com');
+
+  // Act: (none — reading state only)
+
+  // Assert: check the title
+  await expect(page).toHaveTitle('Swag Labs');
+});
+```
+
+- `test()` — registers a test case. The callback receives a **fixture** object.
+- `{ page }` — the `page` fixture is a Playwright `Page` instance, auto-created per test.
+- `async/await` — every browser interaction is asynchronous.
+- `expect()` — wraps a locator or page value with auto-retry assertions.
+
+## playwright.config.ts
+
+```ts
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  // Directory where test files live
+  testDir: './tests',
+
+  // Run tests in parallel (each test gets its own browser context)
+  fullyParallel: true,
+
+  // Fail the build on CI if test.only is left in source
+  forbidOnly: !!process.env.CI,
+
+  // Retry failed tests on CI
+  retries: process.env.CI ? 2 : 0,
+
+  // Reporter: 'html' generates a browsable report
+  reporter: 'html',
+
+  // Shared settings for all projects
+  use: {
+    baseURL: 'https://www.saucedemo.com',
+    trace: 'on-first-retry',  // record trace on first retry
+  },
+
+  // Run across multiple browsers
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+  ],
+});
+```
+
+## Your first real test
+
+<CodeTabs labels={['login.spec.ts', 'playwright.config.ts']}>
+  <Fragment slot="tab-0">
+
+```ts
+import { test, expect } from '@playwright/test';
+
+test.describe('SauceDemo login', () => {
+  test('standard user can log in', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByPlaceholder('Username').fill('standard_user');
+    await page.getByPlaceholder('Password').fill('secret_sauce');
+    await page.getByRole('button', { name: 'Login' }).click();
+
+    await expect(page.getByText('Products')).toBeVisible();
+    await expect(page).toHaveURL(/inventory/);
+  });
+
+  test('locked out user sees error', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByPlaceholder('Username').fill('locked_out_user');
+    await page.getByPlaceholder('Password').fill('secret_sauce');
+    await page.getByRole('button', { name: 'Login' }).click();
+
+    await expect(page.getByText('Sorry, this user has been locked out')).toBeVisible();
+  });
+});
+```
+
+  </Fragment>
+  <Fragment slot="tab-1">
+
+```ts
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests',
+  fullyParallel: true,
+  retries: process.env.CI ? 2 : 0,
+  reporter: 'html',
+  use: {
+    baseURL: 'https://www.saucedemo.com',
+    trace: 'on-first-retry',
+  },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+  ],
+});
+```
+
+  </Fragment>
+</CodeTabs>
+
+<Tip>Use `baseURL` in playwright.config.ts so every `page.goto('/')` resolves to the right environment. Switch environments by changing one config value, not every test.</Tip>
+
+## Running and debugging
+
+```bash
+# Run with UI mode (shows timeline, trace, DOM snapshot)
+npx playwright test --ui
+
+# Run in debug mode (step through test line by line)
+npx playwright test --debug login.spec.ts
+
+# Show the HTML report from the last run
+npx playwright show-report
+```
+
+## Interview questions
+
+<QuizCard client:only="react" storageKey="pw-first-test" questions={[
+  {
+    q: "What is a Playwright fixture and what does the page fixture provide?",
+    a: "A fixture is a Playwright-managed dependency injected into tests via the callback parameter. The page fixture provides a Page instance — a fresh browser tab with its own navigation history, cookies, and event handlers. Playwright creates and destroys it automatically per test, ensuring isolation.",
+    senior: "Fixtures are Playwright's dependency injection system. You extend them with test.extend<Fixtures>() to provide custom page objects, authenticated sessions, or test data. The key design principle: fixtures should manage lifecycle (setup + teardown). A fixture that sets up auth should also tear it down — the test itself should only express intent."
+  },
+  {
+    q: "What is the difference between test() and test.describe()?",
+    a: "test() registers an individual test case. test.describe() creates a named group of tests that can share hooks (beforeAll, beforeEach, afterEach, afterAll) and annotations. Describe blocks can be nested. They are primarily for organisation and for scoping shared setup/teardown to a subset of tests.",
+    senior: "test.describe.parallel() runs the describe block's tests in parallel even when the suite is otherwise serial. test.describe.serial() runs tests serially even in a parallel suite. These are advanced tools for managing state between tests — use them sparingly. Tests that share state via serial execution are harder to debug and slower to parallelise."
+  },
+  {
+    q: "What does fullyParallel: true do in playwright.config.ts?",
+    a: "fullyParallel: true runs every test in a separate worker process simultaneously, regardless of which file it comes from. By default, tests within a file run serially and different files run in parallel. fullyParallel ignores file boundaries — every individual test is eligible for parallel execution.",
+    senior: "fullyParallel is the right default for most projects. The exception: tests that share expensive state (a logged-in session, a seeded database) and are designed to run in a specific order. Those should be in a test.describe.serial() block. Globally enabling fullyParallel and then fixing the serial dependencies forces you to make test isolation explicit."
+  },
+]} />
