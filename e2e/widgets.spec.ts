@@ -46,4 +46,14 @@ test.describe('Widget smoke tests', () => {
     await page.goto('levels/2/waiting/');
     await expect(page.locator('svg[aria-label*="Retry timeline"]')).toBeVisible({ timeout: 15000 });
   });
+
+  test('L3 browser-contexts renders with ConceptDiagram', async ({ page }) => {
+    await page.goto('levels/3/browser-contexts/');
+    await expect(page.locator('svg[aria-label*="Browser"]')).toBeVisible({ timeout: 15000 });
+  });
+
+  test('L3 debugging page renders with quiz', async ({ page }) => {
+    await page.goto('levels/3/debugging-and-tracing/');
+    await expect(page.locator('[data-testid="quiz-card"]')).toBeVisible({ timeout: 15000 });
+  });
 });
