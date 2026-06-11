@@ -1,0 +1,169 @@
+---
+title: "Azure & GCP Essentials"
+level: 9
+order: 2
+description: "Azure DevOps Pipelines and Google Cloud Platform services for test automation infrastructure."
+duration: "25 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Azure for Test Engineers
+
+| Service | AWS Equivalent | Test use case |
+|---|---|---|
+| Azure Pipelines | GitHub Actions | CI/CD for tests |
+| Azure Container Instances (ACI) | Fargate | Run Playwright containers |
+| Azure Blob Storage | S3 | Store test reports and artifacts |
+| Azure Key Vault | Secrets Manager | Test credentials |
+| Azure Container Registry (ACR) | ECR | Store Playwright Docker images |
+| Azure Monitor / App Insights | CloudWatch | Test run observability |
+
+## Azure Pipelines for Playwright
+
+```yaml
+# azure-pipelines.yml
+trigger:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: test-credentials    # Variable Group in Azure DevOps Library
+  - name: BASE_URL
+    value: 'https://staging.example.com'
+
+steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '20.x'
+
+  - script: npm ci
+    displayName: 'Install dependencies'
+
+  - script: npx playwright install --with-deps chromium
+    displayName: 'Install Playwright'
+
+  - script: npx playwright test --reporter=junit,html
+    displayName: 'Run tests'
+    env:
+      API_KEY: $(ApiKey)       # from Variable Group (secret)
+
+  - task: PublishTestResults@2
+    condition: always()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: 'test-results/results.xml'
+      testRunTitle: 'Playwright'
+
+  - task: PublishPipelineArtifact@1
+    condition: always()
+    inputs:
+      targetPath: playwright-report
+      artifact: playwright-report
+      publishLocation: pipeline
+```
+
+## Azure Blob Storage for Reports
+
+```bash
+# Upload via Azure CLI
+az storage blob upload-batch \
+  --account-name myteststore \
+  --destination reports/run-$(Build.BuildId) \
+  --source playwright-report/ \
+  --auth-mode login
+```
+
+```yaml
+# Azure Pipelines task
+- task: AzureCLI@2
+  condition: always()
+  inputs:
+    azureSubscription: 'TestServiceConnection'
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az storage blob upload-batch \
+        --account-name $(StorageAccount) \
+        --destination reports/$(Build.BuildId) \
+        --source playwright-report/
+```
+
+## GCP for Test Engineers
+
+| Service | AWS Equivalent | Test use case |
+|---|---|---|
+| Cloud Build | GitHub Actions | CI/CD for tests |
+| Cloud Run | Fargate | Serverless test containers |
+| Cloud Storage (GCS) | S3 | Test report storage |
+| Secret Manager | Secrets Manager | Test credentials |
+| Artifact Registry | ECR | Container image storage |
+| Cloud Logging | CloudWatch Logs | Test run logs |
+
+## Cloud Build for Playwright
+
+```yaml
+# cloudbuild.yaml
+steps:
+  - name: 'gcr.io/cloud-builders/npm'
+    args: ['ci']
+
+  - name: 'mcr.microsoft.com/playwright:v1.45.0-jammy'
+    entrypoint: 'npx'
+    args: ['playwright', 'test', '--reporter=junit,html']
+    env:
+      - 'BASE_URL=${_BASE_URL}'
+      - 'CI=true'
+    secretEnv: ['API_KEY']
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    args: ['-m', 'cp', '-r', 'playwright-report/', 'gs://${_REPORT_BUCKET}/runs/$BUILD_ID/']
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/api-key/versions/latest
+      env: API_KEY
+
+substitutions:
+  _BASE_URL: 'https://staging.example.com'
+  _REPORT_BUCKET: 'my-test-reports'
+```
+
+## Cloud Run for On-Demand Tests
+
+```bash
+# Deploy test image to Cloud Run
+gcloud run deploy playwright-tests \
+  --image gcr.io/my-project/pw-tests:latest \
+  --region us-central1 \
+  --set-env-vars BASE_URL=https://staging.example.com \
+  --set-secrets API_KEY=api-key:latest \
+  --no-allow-unauthenticated \
+  --max-instances 10
+
+# Trigger a test run
+gcloud run jobs execute playwright-tests --region us-central1
+```
+
+## Cross-Cloud Comparison
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Serverless containers | ECS Fargate | ACI | Cloud Run |
+| CI/CD | CodePipeline | Pipelines | Cloud Build |
+| Report storage | S3 | Blob Storage | GCS |
+| Secrets | Secrets Manager | Key Vault | Secret Manager |
+| IAM concept | IAM Roles | Service Principals | Service Accounts |
+
+<QuizCard client:only="react" storageKey="cloud-azure" questions={[
+  { q: "How do you pass secrets to Azure Pipelines steps without hardcoding them?", a: "Use Variable Groups in Azure DevOps Library (marked secret), or Azure Key Vault. Reference in YAML as `$(SecretName)`. Marked secrets are masked in logs." },
+  { q: "What is the GCP equivalent of GitHub Actions for CI/CD?", a: "Cloud Build. It runs steps in containers defined in `cloudbuild.yaml`, triggered by commits or manually. Cloud Run Jobs is the equivalent for on-demand container execution." },
+  { q: "What is `PublishTestResults@2` in Azure Pipelines and why use it?", a: "An Azure DevOps task that ingests JUnit XML test results and displays them in the pipeline UI — shows pass/fail per test, trends over time. Use `--reporter=junit` to generate the XML." },
+  { q: "For a GCP-hosted project, how would you store Playwright test reports?", a: "Use Cloud Storage (GCS). Upload with `gsutil -m cp -r playwright-report/ gs://bucket/runs/$BUILD_ID/`. Set retention lifecycle rules to auto-delete old reports." }
+]} />

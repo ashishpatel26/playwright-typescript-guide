@@ -1,0 +1,167 @@
+---
+title: "XSS & CSRF"
+level: 11
+order: 2
+description: "Test for Cross-Site Scripting and Cross-Site Request Forgery vulnerabilities with Playwright."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Cross-Site Scripting (XSS)
+
+XSS injects malicious scripts into web pages viewed by other users. Three types:
+
+| Type | Mechanism |
+|---|---|
+| **Stored** | Malicious payload saved in DB, served to all visitors |
+| **Reflected** | Payload in URL parameter, reflected in response |
+| **DOM-based** | Client-side JS reads attacker-controlled data into DOM |
+
+## Testing for XSS with Playwright
+
+```ts
+const XSS_PAYLOADS = [
+  '<script>alert("xss")</script>',
+  '"><img src=x onerror=alert(1)>',
+  "'; alert('xss'); //",
+  '<svg onload=alert(1)>',
+  'javascript:alert(1)',
+];
+
+test('comment form sanitises XSS payloads', async ({ page }) => {
+  for (const payload of XSS_PAYLOADS) {
+    // Submit payload
+    await page.goto('/comments');
+    await page.fill('[name=comment]', payload);
+    await page.click('[type=submit]');
+
+    // Detect alert dialog (indicates XSS executed)
+    let dialogFired = false;
+    page.once('dialog', async (dialog) => {
+      dialogFired = true;
+      await dialog.dismiss();
+    });
+
+    await page.reload();
+    await page.waitForTimeout(1000);
+
+    expect(dialogFired).toBe(false);  // no alert = XSS prevented
+  }
+});
+```
+
+## Verifying Sanitisation (Not Escaped)
+
+```ts
+test('XSS payload stored as escaped text, not HTML', async ({ page, request }) => {
+  const payload = '<script>alert("xss")</script>';
+
+  await request.post('/api/comments', {
+    data: { text: payload },
+  });
+
+  await page.goto('/comments');
+
+  // The script tag should appear as visible text, not execute
+  const commentText = await page.locator('.comment').last().textContent();
+  expect(commentText).toContain('<script>');    // visible escaped text
+  expect(commentText).not.toContain('undefined'); // not executed
+
+  // Alternatively: check DOM — should be text node, not element
+  const scriptTags = await page.locator('.comment script').count();
+  expect(scriptTags).toBe(0);
+});
+```
+
+## CSP Header Verification
+
+Content Security Policy blocks inline script execution even if XSS payload is injected:
+
+```ts
+test('Content-Security-Policy header is set', async ({ request }) => {
+  const res = await request.get('/');
+  const csp = res.headers()['content-security-policy'];
+  expect(csp).toBeDefined();
+  expect(csp).toContain("script-src");
+  expect(csp).not.toContain("'unsafe-inline'");  // unsafe-inline defeats CSP
+});
+```
+
+## Cross-Site Request Forgery (CSRF)
+
+CSRF tricks a logged-in user's browser into making unauthorised requests to another site.
+
+**Attack flow:**
+1. User logs into `bank.com` (cookie set)
+2. User visits `evil.com`
+3. `evil.com` contains `<img src="https://bank.com/transfer?to=attacker&amount=1000">`
+4. Browser sends the request with `bank.com` cookie — transfer executes
+
+**Defences:**
+- CSRF tokens (synchroniser token pattern)
+- `SameSite=Strict` or `SameSite=Lax` cookies
+- Origin/Referer header validation
+- Custom request headers (AJAX requests send `X-Requested-With`)
+
+## Testing CSRF Protection
+
+```ts
+test('state-changing request requires CSRF token', async ({ request }) => {
+  // Simulate cross-origin request without CSRF token
+  const res = await request.post('/api/account/change-password', {
+    headers: {
+      // No Origin/Referer matching the expected domain
+      'Origin': 'https://attacker.example.com',
+      'Content-Type': 'application/json',
+    },
+    data: { newPassword: 'hacked123!' },
+  });
+  expect([403, 400]).toContain(res.status());   // rejected
+});
+
+test('session cookie has SameSite attribute', async ({ page }) => {
+  await page.goto('/login');
+  await page.fill('[name=email]', 'test@test.com');
+  await page.fill('[name=password]', 'password');
+  await page.click('[type=submit]');
+
+  const cookies = await page.context().cookies();
+  const sessionCookie = cookies.find((c) => c.name === 'session');
+  expect(sessionCookie).toBeDefined();
+  expect(['Strict', 'Lax']).toContain(sessionCookie!.sameSite);
+});
+```
+
+## Security Headers Audit
+
+```ts
+const REQUIRED_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'referrer-policy': expect.stringContaining('same-origin'),
+};
+
+test('security headers are present', async ({ request }) => {
+  const res = await request.get('/');
+  const headers = res.headers();
+
+  for (const [header, expected] of Object.entries(REQUIRED_HEADERS)) {
+    if (typeof expected === 'string') {
+      expect(headers[header]).toBe(expected);
+    } else {
+      expect(headers[header]).toEqual(expected);
+    }
+  }
+});
+```
+
+<QuizCard client:only="react" storageKey="sec-xss" questions={[
+  { q: "How does Playwright's `page.on('dialog')` help detect XSS?", a: "Many XSS payloads use `alert()` as a proof-of-concept. Playwright intercepts `alert()` dialogs via the `dialog` event. If a dialog fires after submitting a payload, XSS executed." },
+  { q: "What is the difference between stored XSS and reflected XSS?", a: "Stored XSS persists in the database — anyone who views the affected page gets the payload. Reflected XSS only fires if the victim clicks a crafted URL — the payload is in the request parameter, reflected back in the response." },
+  { q: "What does `SameSite=Strict` on a cookie prevent?", a: "Prevents the browser from sending the cookie in cross-site requests — any request from a different origin. Completely prevents CSRF. `SameSite=Lax` allows cookies on top-level navigations but blocks subresource cross-site requests." },
+  { q: "Why is `'unsafe-inline'` in a Content-Security-Policy `script-src` directive dangerous?", a: "It allows inline `<script>` tags and `onclick=` attributes to execute — exactly what XSS payloads use. A CSP with `'unsafe-inline'` provides no XSS protection for inline injection vectors." }
+]} />

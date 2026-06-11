@@ -1,0 +1,185 @@
+---
+title: "Injection & Auth Vulnerabilities"
+level: 11
+order: 3
+description: "Test for SQL injection, command injection, and authentication bypass vulnerabilities."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## SQL Injection
+
+SQL injection inserts malicious SQL into input fields to manipulate database queries.
+
+**Vulnerable query:**
+```sql
+SELECT * FROM users WHERE email = '$email' AND password = '$pass'
+```
+
+**Attack input:** `email = ' OR '1'='1' --`
+
+**Result:** `SELECT * FROM users WHERE email = '' OR '1'='1' --' AND password = '...'`
+→ Returns all users, bypassing authentication.
+
+## Testing for SQLi with Playwright
+
+```ts
+const SQL_PAYLOADS = [
+  "' OR '1'='1",
+  "'; DROP TABLE users; --",
+  "' OR 1=1 --",
+  "\" OR \"\"=\"",
+  "' UNION SELECT null, username, password FROM users --",
+];
+
+test('login form rejects SQL injection payloads', async ({ page }) => {
+  for (const payload of SQL_PAYLOADS) {
+    await page.goto('/login');
+    await page.fill('[name=email]', payload);
+    await page.fill('[name=password]', payload);
+    await page.click('[type=submit]');
+
+    // Should NOT be logged in
+    await expect(page).not.toHaveURL(/dashboard/);
+
+    // Should show error message, not a DB error
+    const bodyText = await page.locator('body').textContent();
+    expect(bodyText?.toLowerCase()).not.toContain('sql');
+    expect(bodyText?.toLowerCase()).not.toContain('syntax error');
+    expect(bodyText?.toLowerCase()).not.toContain('unclosed quotation');
+  }
+});
+```
+
+## API SQLi Testing
+
+```ts
+test('search API rejects injection in query parameters', async ({ request }) => {
+  const payloads = ["' OR 1=1 --", "'; DROP TABLE products; --"];
+
+  for (const payload of payloads) {
+    const res = await request.get('/api/products', {
+      params: { search: payload },
+    });
+    // Should return 400 (validation error) or 200 with empty results
+    // Should NOT return 500 (DB error) or full table dump
+    expect(res.status()).not.toBe(500);
+    if (res.status() === 200) {
+      const body = await res.json();
+      // Should not return suspiciously large number of results
+      expect(body.length).toBeLessThan(100);
+    }
+  }
+});
+```
+
+## Error Disclosure Detection
+
+SQLi often reveals itself through error messages. Test that errors are generic:
+
+```ts
+test('database errors are not exposed to users', async ({ request }) => {
+  // Send malformed data that might trigger DB errors
+  const res = await request.post('/api/users', {
+    data: { id: "' OR 1=1 --", name: null },
+  });
+
+  if (res.status() >= 400) {
+    const body = await res.text();
+    // DB error strings must not appear in response
+    const dbErrorPatterns = [
+      'syntax error', 'sql', 'postgresql', 'mysql', 'sqlite',
+      'ORA-', 'ODBC', 'unclosed quotation', 'unterminated string',
+    ];
+    for (const pattern of dbErrorPatterns) {
+      expect(body.toLowerCase()).not.toContain(pattern);
+    }
+  }
+});
+```
+
+## Authentication Bypass
+
+```ts
+test('cannot log in with empty credentials', async ({ request }) => {
+  const res = await request.post('/api/login', {
+    data: { username: '', password: '' },
+  });
+  expect([400, 401]).toContain(res.status());
+});
+
+test('cannot access protected route without token', async ({ request }) => {
+  const res = await request.get('/api/protected');
+  expect(res.status()).toBe(401);
+});
+
+test('expired token is rejected', async ({ request }) => {
+  // An old/invalid JWT
+  const expiredToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwiZXhwIjoxfQ.invalid';
+  const res = await request.get('/api/profile', {
+    headers: { Authorization: `Bearer ${expiredToken}` },
+  });
+  expect(res.status()).toBe(401);
+});
+
+test('token from user A rejected for user B resource', async ({ request }) => {
+  const tokenA = await loginAs(request, 'user-a@test.com');
+  const userBId = 'user-b-uuid';
+
+  const res = await request.get(`/api/users/${userBId}/settings`, {
+    headers: { Authorization: `Bearer ${tokenA}` },
+  });
+  expect(res.status()).toBe(403);
+});
+```
+
+## Command Injection (Node.js)
+
+```ts
+const CMD_PAYLOADS = [
+  '; ls -la',
+  '| cat /etc/passwd',
+  '`whoami`',
+  '$(id)',
+  '& dir',
+];
+
+test('filename input rejects command injection', async ({ request }) => {
+  for (const payload of CMD_PAYLOADS) {
+    const res = await request.post('/api/files/convert', {
+      data: { filename: `document${payload}.pdf` },
+    });
+    // Should reject or sanitise — not execute OS command
+    expect([400, 422]).toContain(res.status());
+    if (res.status() === 200) {
+      const body = await res.text();
+      // Should not contain OS command output
+      expect(body).not.toContain('root:');       // /etc/passwd
+      expect(body).not.toContain('uid=');        // id command output
+    }
+  }
+});
+```
+
+## Parameterised Queries — The Fix
+
+Always verify backend uses parameterised queries — test engineer's job is to confirm the code review standard:
+
+```ts
+// ✅ Safe — parameterised
+await db.query('SELECT * FROM users WHERE email = $1', [email]);
+
+// ❌ Unsafe — string interpolation (never write this)
+await db.query(`SELECT * FROM users WHERE email = '${email}'`);
+```
+
+<QuizCard client:only="react" storageKey="sec-injection" questions={[
+  { q: "How does a Playwright test detect a successful SQL injection without seeing the database?", a: "By observing side effects: login succeeds with invalid credentials, more records returned than expected, server returns 500 with DB error strings, or the response body contains data from other users." },
+  { q: "Why check that error responses don't contain words like 'sql', 'syntax error', or 'postgresql'?", a: "DB error messages reveal the database type, table names, and query structure — giving attackers a roadmap for further exploitation. Generic error messages ('An error occurred') are correct." },
+  { q: "What HTTP status should a properly secured API return for an expired JWT?", a: "401 Unauthorized — the request is unauthenticated because the token is no longer valid. Not 403 (authorised user, wrong permission) and not 200." },
+  { q: "What is the root fix for SQL injection and how do tests verify it's in place?", a: "Parameterised queries (prepared statements). Tests verify indirectly: injection payloads return consistent results (no data leakage), no DB error strings in responses, behaviour identical to normal invalid input." }
+]} />

@@ -1,0 +1,145 @@
+---
+title: "AWS for Test Engineers"
+level: 9
+order: 1
+description: "Key AWS services for test infrastructure — EC2, S3, Lambda, ECS, and IAM basics."
+duration: "35 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## AWS Services Test Engineers Use
+
+| Service | What it does | Test use case |
+|---|---|---|
+| **EC2** | Virtual machines | Self-hosted CI runners, test VMs |
+| **S3** | Object storage | Store test reports, screenshots, videos |
+| **Lambda** | Serverless functions | Trigger test runs, process results |
+| **ECS / Fargate** | Container orchestration | Run Playwright in containers at scale |
+| **ECR** | Container registry | Store Playwright Docker images |
+| **Secrets Manager** | Secrets storage | API keys, DB passwords for tests |
+| **CloudWatch** | Logging / monitoring | Aggregate test run logs |
+| **IAM** | Identity & access | Permissions for CI pipelines |
+
+## S3 for Test Reports
+
+```bash
+# Upload Playwright HTML report to S3
+aws s3 sync playwright-report/ s3://my-test-reports/run-${{ github.run_id }}/
+
+# Generate pre-signed URL for sharing
+aws s3 presign s3://my-test-reports/run-123/index.html --expires-in 604800
+# Link valid for 7 days
+```
+
+```yaml
+# GitHub Actions step
+- name: Upload report to S3
+  if: always()
+  run: |
+    aws s3 sync playwright-report/ \
+      s3://${{ vars.REPORT_BUCKET }}/runs/${{ github.run_id }}/
+  env:
+    AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+    AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    AWS_REGION: us-east-1
+```
+
+## ECS Fargate for Serverless Test Execution
+
+```json
+// ECS Task Definition (simplified)
+{
+  "family": "playwright-tests",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "containerDefinitions": [{
+    "name": "playwright",
+    "image": "123456789.dkr.ecr.us-east-1.amazonaws.com/pw-tests:latest",
+    "environment": [
+      { "name": "BASE_URL", "value": "https://staging.example.com" },
+      { "name": "CI", "value": "true" }
+    ],
+    "secrets": [{
+      "name": "API_KEY",
+      "valueFrom": "arn:aws:secretsmanager:us-east-1:123:secret:test/api-key"
+    }],
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "options": {
+        "awslogs-group": "/ecs/playwright-tests",
+        "awslogs-region": "us-east-1"
+      }
+    }
+  }]
+}
+```
+
+## Secrets Manager for Test Credentials
+
+```ts
+// Fetch secrets at test runtime (Node.js)
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+
+const client = new SecretsManagerClient({ region: 'us-east-1' });
+
+async function getTestCredentials() {
+  const { SecretString } = await client.send(
+    new GetSecretValueCommand({ SecretId: 'prod/playwright/credentials' })
+  );
+  return JSON.parse(SecretString!);
+  // { apiKey: '...', dbPassword: '...' }
+}
+```
+
+Prefer environment variables injected by CI over runtime secrets fetching — simpler and no AWS SDK dependency in tests.
+
+## IAM Principles for CI
+
+```json
+// Minimal IAM policy for a CI role
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::my-test-reports",
+        "arn:aws:s3:::my-test-reports/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ecr:GetAuthorizationToken", "ecr:BatchGetImage"],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+**Principle of least privilege:** CI role gets only S3 write + ECR pull. Not `AdministratorAccess`.
+
+## AWS CLI in Tests
+
+```bash
+# Configure for CI (use OIDC/role-based auth in production, not long-term keys)
+aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+aws configure set region us-east-1
+
+# Check connectivity
+aws sts get-caller-identity
+```
+
+<QuizCard client:only="react" storageKey="cloud-aws" questions={[
+  { q: "What is the primary advantage of using S3 for Playwright report storage over GitHub Actions artifacts?", a: "S3 reports persist indefinitely (configurable retention), are shareable via pre-signed URLs without GitHub access, and integrate with other tools. GitHub artifacts expire and require GitHub authentication to view." },
+  { q: "Why use Fargate instead of EC2 for running Playwright tests?", a: "Fargate is serverless — no EC2 instances to manage, patch, or size. Pay per-second per task. Auto-scales to zero. EC2 makes sense for long-running, always-on runners with custom AMIs." },
+  { q: "What is the principle of least privilege and how does it apply to CI IAM roles?", a: "Grant only the minimum permissions needed. A CI role that uploads reports only needs `s3:PutObject` on that bucket — not `AdministratorAccess`. Limits blast radius if credentials are compromised." },
+  { q: "What is AWS Secrets Manager and when should tests use it over environment variables?", a: "Secrets Manager stores and rotates secrets centrally. Use it when the same secret is shared across many services, needs rotation, or requires audit logging. For simple CI, environment variables injected by the CI platform are simpler.", senior: "Fetching secrets at runtime adds latency and an SDK dependency to tests. Prefer CI platform secret injection (GitHub Actions secrets, GitLab variables) unless rotation or cross-service sharing is required." }
+]} />

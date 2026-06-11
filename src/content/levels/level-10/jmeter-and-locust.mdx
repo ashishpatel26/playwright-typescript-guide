@@ -1,0 +1,171 @@
+---
+title: "JMeter & Locust"
+level: 10
+order: 3
+description: "Understand JMeter test plans and Locust Python scripts for HTTP load testing."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## JMeter Overview
+
+Apache JMeter is the industry-standard Java-based load testing tool. Used widely in enterprise environments. GUI for test design, CLI for CI execution.
+
+```bash
+# Install
+brew install jmeter             # macOS
+# Or: download from jmeter.apache.org
+
+# GUI mode (test design)
+jmeter
+
+# CLI mode (CI execution — headless)
+jmeter -n -t test-plan.jmx -l results.jtl -e -o report/
+```
+
+## JMeter Test Plan Structure
+
+```
+Test Plan
+├── Thread Group (users × ramp-up × duration)
+│   ├── HTTP Request Defaults (base URL)
+│   ├── HTTP Cookie Manager
+│   ├── CSV Data Set Config (test data from file)
+│   ├── HTTP Request (GET /api/bookings)
+│   ├── HTTP Request (POST /api/login)
+│   ├── Response Assertion (status = 200)
+│   ├── Duration Assertion (< 500ms)
+│   └── View Results Tree (debug — remove in CI)
+└── Listeners (results, graphs — use CLI flags in CI)
+```
+
+## JMeter Thread Group Configuration
+
+```xml
+<!-- thread-group.jmx excerpt -->
+<ThreadGroup>
+  <stringProp name="ThreadGroup.num_threads">100</stringProp>  <!-- users -->
+  <stringProp name="ThreadGroup.ramp_time">60</stringProp>     <!-- ramp seconds -->
+  <stringProp name="ThreadGroup.duration">300</stringProp>     <!-- test duration -->
+  <stringProp name="ThreadGroup.scheduler">true</stringProp>   <!-- use duration -->
+</ThreadGroup>
+```
+
+## JMeter in CI
+
+```bash
+# Run in headless mode + generate HTML report
+jmeter -n \
+  -t tests/booking-load.jmx \
+  -l results/results.jtl \
+  -e -o results/html-report/ \
+  -Jbase_url=https://staging.example.com \
+  -Jusers=50 \
+  -Jramp=30
+
+# Check pass/fail by error rate (no built-in threshold like k6)
+# Parse results.jtl and fail CI if error rate > 1%
+python3 scripts/check-jmeter-results.py results/results.jtl
+```
+
+## JMeter with Jenkins
+
+```groovy
+// Jenkinsfile
+stage('Performance') {
+  steps {
+    sh 'jmeter -n -t tests/load.jmx -l results.jtl -e -o html-report/'
+    perfReport sourceDataFiles: 'results.jtl'  // Performance Plugin
+    publishHTML(target: [reportDir: 'html-report', reportFiles: 'index.html'])
+  }
+}
+```
+
+## Locust Overview
+
+Locust is a Python-based load testing tool. Tests are pure Python — no XML, no GUI required. Easy to extend with custom behaviour.
+
+```bash
+# Install
+pip install locust
+
+# Run headless
+locust -f locustfile.py --headless -u 100 -r 10 -t 2m --host https://staging.example.com
+
+# Run with web UI
+locust -f locustfile.py --host https://staging.example.com
+```
+
+## Locust Test File
+
+```python
+# locustfile.py
+from locust import HttpUser, task, between
+
+class BookingUser(HttpUser):
+    wait_time = between(1, 3)  # think time: 1-3 seconds between tasks
+    token = None
+
+    def on_start(self):
+        # Authenticate before running tasks
+        res = self.client.post('/auth', json={
+            'username': 'admin',
+            'password': 'password123',
+        })
+        self.token = res.json()['token']
+
+    @task(3)       # weight: called 3× more than @task(1)
+    def list_bookings(self):
+        self.client.get('/booking', name='GET /booking')
+
+    @task(1)
+    def get_booking(self):
+        self.client.get('/booking/1', name='GET /booking/:id')
+
+    @task(1)
+    def create_booking(self):
+        self.client.post('/booking', json={
+            'firstname': 'Load',
+            'lastname': 'Test',
+            'totalprice': 100,
+            'depositpaid': True,
+            'bookingdates': {'checkin': '2025-01-01', 'checkout': '2025-01-02'},
+        }, name='POST /booking')
+```
+
+## Locust in CI
+
+```bash
+# Headless with exit code on failure
+locust -f locustfile.py \
+  --headless \
+  --users 100 \
+  --spawn-rate 10 \
+  --run-time 2m \
+  --host $BASE_URL \
+  --html locust-report.html \
+  --csv locust-results \
+  --exit-code-on-error 1
+```
+
+## JMeter vs Locust vs k6
+
+| | JMeter | Locust | k6 |
+|---|---|---|---|
+| Language | XML (GUI/code) | Python | JavaScript |
+| Learning curve | High | Medium | Low |
+| CI integration | Good (CLI) | Good | Excellent |
+| Distributed | Yes (controller/workers) | Yes (master/workers) | Yes (cloud) |
+| Thresholds | Manual scripting | `--exit-code-on-error` | Native |
+| Enterprise adoption | Very high | Medium | Growing |
+
+<QuizCard client:only="react" storageKey="perf-jmeter" questions={[
+  { q: "Why run JMeter in CLI mode (`-n`) in CI rather than GUI mode?", a: "GUI mode requires a display and is resource-intensive. CLI mode is headless, scriptable, and outputs `.jtl` results files that CI can parse. GUI is for test design, CLI is for execution." },
+  { q: "What does the `@task` weight in Locust control?", a: "The relative frequency of task execution. `@task(3)` on `list_bookings` and `@task(1)` on `create_booking` means Locust calls list_bookings 3× for every 1 create_booking call — modelling realistic traffic distribution." },
+  { q: "How does `on_start` in a Locust `HttpUser` class work?", a: "Called once per virtual user when it spawns. Use it for per-user setup like login — the user authenticates once and reuses the session/token for all subsequent tasks." },
+  { q: "What is the main advantage of Locust over JMeter for a Python development team?", a: "Locust tests are plain Python code — no XML test plan files, no GUI required, version-controlled like application code. Python teams can extend Locust with any Python library without plugins." }
+]} />

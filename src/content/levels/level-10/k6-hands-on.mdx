@@ -1,0 +1,170 @@
+---
+title: "k6 Hands-On"
+level: 10
+order: 2
+description: "Write and run k6 load tests — virtual users, scenarios, thresholds, and CI integration."
+duration: "35 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## What Is k6?
+
+k6 is a developer-friendly open-source load testing tool. Scripts are written in JavaScript, and it runs as a single binary with no JVM or complex setup. Tests integrate naturally with CI pipelines.
+
+```bash
+# Install
+brew install k6              # macOS
+choco install k6             # Windows
+docker pull grafana/k6       # Docker
+
+# Run a test
+k6 run script.js
+```
+
+## Basic Script
+
+```js
+// load-test.js
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+export const options = {
+  vus: 10,           // virtual users
+  duration: '30s',   // test duration
+};
+
+export default function () {
+  const res = http.get('https://test.k6.io');
+
+  check(res, {
+    'status is 200': (r) => r.status === 200,
+    'response time < 500ms': (r) => r.timings.duration < 500,
+  });
+
+  sleep(1);  // 1 second think time between iterations
+}
+```
+
+```bash
+k6 run load-test.js
+# Output: req/s, p95, p99, error rate, check pass rate
+```
+
+## Scenarios
+
+More control than `vus` + `duration`:
+
+```js
+export const options = {
+  scenarios: {
+    ramp_up: {
+      executor: 'ramping-vus',
+      startVUs: 0,
+      stages: [
+        { duration: '2m', target: 100 },   // ramp to 100
+        { duration: '5m', target: 100 },   // hold
+        { duration: '2m', target: 0 },     // ramp down
+      ],
+    },
+  },
+};
+```
+
+### Executor Types
+
+| Executor | Use case |
+|---|---|
+| `constant-vus` | Fixed users for fixed duration |
+| `ramping-vus` | Ramp up/down — load & stress tests |
+| `constant-arrival-rate` | Fixed RPS regardless of response time |
+| `ramping-arrival-rate` | Ramp RPS — spike tests |
+| `per-vu-iterations` | Each VU runs N times |
+
+## Thresholds (Pass/Fail Gates)
+
+```js
+export const options = {
+  thresholds: {
+    http_req_duration: ['p(95)<500', 'p(99)<1000'],  // p95 < 500ms
+    http_req_failed: ['rate<0.01'],                  // error rate < 1%
+    checks: ['rate>0.95'],                           // 95% checks pass
+  },
+};
+```
+
+k6 exits with code 1 if any threshold fails — CI pipeline fails automatically.
+
+## REST API Load Test
+
+```js
+import http from 'k6/http';
+import { check } from 'k6';
+
+const BASE_URL = __ENV.BASE_URL || 'https://restful-booker.herokuapp.com';
+
+export const options = {
+  scenarios: {
+    bookings_load: {
+      executor: 'constant-arrival-rate',
+      rate: 10,              // 10 RPS
+      timeUnit: '1s',
+      duration: '2m',
+      preAllocatedVUs: 20,
+    },
+  },
+  thresholds: {
+    http_req_duration: ['p(95)<800'],
+    http_req_failed: ['rate<0.05'],
+  },
+};
+
+export function setup() {
+  // Get auth token once — shared across VUs
+  const res = http.post(`${BASE_URL}/auth`, JSON.stringify({
+    username: 'admin', password: 'password123',
+  }), { headers: { 'Content-Type': 'application/json' } });
+  return { token: res.json('token') };
+}
+
+export default function ({ token }) {
+  const res = http.get(`${BASE_URL}/booking`, {
+    headers: { Cookie: `token=${token}` },
+  });
+  check(res, {
+    'bookings returned': (r) => r.status === 200,
+    'has results': (r) => r.json().length > 0,
+  });
+}
+```
+
+## k6 in CI (GitHub Actions)
+
+```yaml
+- name: Run load test
+  uses: grafana/k6-action@v0.3.1
+  with:
+    filename: tests/load-test.js
+  env:
+    BASE_URL: ${{ vars.STAGING_URL }}
+    K6_CLOUD_TOKEN: ${{ secrets.K6_CLOUD_TOKEN }}  # optional: stream to Grafana Cloud
+```
+
+## Output Formats
+
+```bash
+k6 run --out json=results.json load-test.js     # raw metrics
+k6 run --out csv=results.csv load-test.js       # spreadsheet-friendly
+k6 run --out influxdb=http://localhost:8086 ...  # Grafana dashboard
+k6 run --out cloud load-test.js                  # Grafana Cloud k6
+```
+
+<QuizCard client:only="react" storageKey="perf-k6" questions={[
+  { q: "What is a k6 threshold and how does it integrate with CI?", a: "A threshold is a pass/fail condition on a metric (e.g., `p(95)<500`). k6 exits with code 1 when any threshold fails. CI interprets non-zero exit as failure — the pipeline stops automatically." },
+  { q: "What is the difference between `ramping-vus` and `constant-arrival-rate` executors?", a: "`ramping-vus` controls the number of virtual users — actual RPS depends on response time. `constant-arrival-rate` controls requests per second regardless of how long each takes — better for SLA testing at a fixed throughput." },
+  { q: "Why use `setup()` to get an auth token rather than fetching it in each VU iteration?", a: "`setup()` runs once before the test, returns data to all VUs. Fetching per-iteration wastes RPS quota on auth calls and can skew metrics. Token from `setup()` is passed to the default function as a parameter." },
+  { q: "What does `sleep(1)` do in a k6 script and why include it?", a: "Pauses each VU for 1 second between iterations — simulates user think time. Without it, VUs hammer the server as fast as possible, not representing real user behaviour. Omit only for stress tests intentionally maximising load." }
+]} />

@@ -1,0 +1,150 @@
+---
+title: "OWASP Top 10 for Testers"
+level: 11
+order: 1
+description: "Understand the OWASP Top 10 vulnerabilities and how test engineers detect them."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## The OWASP Top 10 (2021)
+
+OWASP (Open Web Application Security Project) publishes the most critical web security risks. Test engineers need awareness to write security-conscious tests and find common vulnerabilities.
+
+| # | Vulnerability | Quick description |
+|---|---|---|
+| A01 | Broken Access Control | Users can act outside their permissions |
+| A02 | Cryptographic Failures | Sensitive data exposed (no TLS, weak encryption) |
+| A03 | Injection | SQL, OS, LDAP injection via untrusted input |
+| A04 | Insecure Design | Architecture-level security flaws |
+| A05 | Security Misconfiguration | Default credentials, verbose errors, open ports |
+| A06 | Vulnerable & Outdated Components | Dependencies with known CVEs |
+| A07 | Identification & Auth Failures | Broken auth, weak passwords, no MFA |
+| A08 | Software & Data Integrity Failures | CI/CD pipeline tampering, unsigned packages |
+| A09 | Security Logging & Monitoring Failures | No audit trail, no alerting on attacks |
+| A10 | SSRF | Server-side request forgery via user-controlled URLs |
+
+## A01: Broken Access Control Tests
+
+```ts
+test('regular user cannot access admin endpoint', async ({ request }) => {
+  const userToken = await getUserToken(request);
+
+  const res = await request.get('/api/admin/users', {
+    headers: { Authorization: `Bearer ${userToken}` },
+  });
+  expect(res.status()).toBe(403);  // Forbidden — not 200 or 404
+});
+
+test('user cannot access another user data via ID manipulation', async ({ request }) => {
+  const userAToken = await loginAs(request, 'user-a');
+  const userBId = 'user-b-id';
+
+  // Horizontal privilege escalation — should be blocked
+  const res = await request.get(`/api/users/${userBId}/profile`, {
+    headers: { Authorization: `Bearer ${userAToken}` },
+  });
+  expect(res.status()).toBe(403);
+});
+```
+
+## A05: Security Misconfiguration
+
+```ts
+test('server does not expose version info in headers', async ({ request }) => {
+  const res = await request.get('/');
+  const headers = res.headers();
+  expect(headers['x-powered-by']).toBeUndefined();   // hides tech stack
+  expect(headers['server']).not.toContain('Apache'); // hides version
+});
+
+test('no debug endpoints in production', async ({ request }) => {
+  const debugEndpoints = ['/debug', '/phpinfo', '/.env', '/config.json', '/swagger'];
+  for (const endpoint of debugEndpoints) {
+    const res = await request.get(endpoint);
+    expect([403, 404]).toContain(res.status());       // must not be 200
+  }
+});
+```
+
+## A07: Authentication Failures
+
+```ts
+test('brute force protection activates after N attempts', async ({ request }) => {
+  // Attempt 5 wrong logins
+  for (let i = 0; i < 5; i++) {
+    await request.post('/api/login', {
+      data: { username: 'admin', password: 'wrong' },
+    });
+  }
+  // 6th attempt should be rate-limited or locked
+  const res = await request.post('/api/login', {
+    data: { username: 'admin', password: 'wrong' },
+  });
+  expect([429, 423]).toContain(res.status());   // Too Many Requests or Locked
+});
+
+test('password reset token expires', async ({ request }) => {
+  // Generate token
+  await request.post('/api/auth/reset-password', { data: { email: 'user@test.com' } });
+  const token = await getLatestResetToken();   // from DB or email mock
+
+  // Wait past expiry
+  await new Promise(r => setTimeout(r, 2000));
+
+  // Use an already-expired token (short expiry in test env)
+  const res = await request.post('/api/auth/reset-password/confirm', {
+    data: { token, newPassword: 'NewPass123!' },
+  });
+  expect(res.status()).toBe(400);   // expired token rejected
+});
+```
+
+## A02: Cryptographic Failures
+
+```ts
+test('login uses HTTPS', async ({ page }) => {
+  const responses: string[] = [];
+  page.on('response', (r) => responses.push(r.url()));
+
+  await page.goto('/login');
+  await page.fill('[name=email]', 'test@test.com');
+  await page.fill('[name=password]', 'pass');
+  await page.click('[type=submit]');
+
+  // All network requests during login should use HTTPS
+  const httpRequests = responses.filter(u => u.startsWith('http://'));
+  expect(httpRequests).toHaveLength(0);
+});
+
+test('sensitive data not in URL parameters', async ({ page }) => {
+  await page.goto('/login');
+  // Login...
+  const url = page.url();
+  // No token in URL (visible in browser history, logs, referrer headers)
+  expect(url).not.toContain('token=');
+  expect(url).not.toContain('password=');
+});
+```
+
+## Security Testing Tools
+
+| Tool | Purpose |
+|---|---|
+| OWASP ZAP | Automated scanner — integrates with Playwright |
+| Burp Suite | Manual + automated web app pen testing |
+| Snyk | Dependency vulnerability scanning |
+| Trivy | Container image scanning |
+| SemGrep | Static analysis for security patterns |
+| OWASP Dependency-Check | Known CVE checking in dependencies |
+
+<QuizCard client:only="react" storageKey="sec-owasp" questions={[
+  { q: "What is broken access control (OWASP A01) and how do you test for it?", a: "Users can perform actions or access data beyond their permissions. Test by: logging in as a low-privilege user and attempting admin endpoints, accessing other users' IDs directly (IDOR), testing path traversal." },
+  { q: "What HTTP status should an API return when a user tries to access a resource they're not allowed to?", a: "403 Forbidden (authenticated but unauthorised). Not 404 (hides existence), not 200, not 401 (unauthenticated). 403 gives correct semantics without leaking resource existence." },
+  { q: "How can a Playwright test verify that no sensitive data appears in URL parameters?", a: "After a sensitive operation (login, password reset), check `page.url()` for query parameters like `token=`, `password=`, `api_key=`. Tokens in URLs appear in browser history, server logs, and Referer headers." },
+  { q: "What is an IDOR vulnerability and how does an automated test detect it?", a: "Insecure Direct Object Reference — user A accesses user B's data by guessing or enumerating IDs. Test: log in as user A, request `/api/users/{user-B-id}`, assert response is 403 not 200.", senior: "Enumerate a range of IDs in a test to ensure none return 200 for the wrong user. Combine with API chaining to create two users and cross-check each other's data." }
+]} />

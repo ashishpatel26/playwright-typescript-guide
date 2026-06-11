@@ -1,0 +1,116 @@
+---
+title: "Load, Stress, Spike, Endurance"
+level: 10
+order: 1
+description: "Understand the four types of performance tests and when to apply each."
+duration: "30 min"
+status: complete
+widgets:
+  - diagram
+  - quiz
+---
+
+import MermaidDiagram from '../../../components/react/MermaidDiagram';
+import QuizCard from '../../../components/react/QuizCard';
+
+## Performance Test Types
+
+<MermaidDiagram client:only="react" chart={`flowchart LR\n  subgraph Load Test\n    L1["Ramp up"] --> L2["Sustained load<br/>(expected users)"] --> L3["Ramp down"]\n  end\n  subgraph Stress Test\n    S1["Ramp up"] --> S2["Exceed limits<br/>(2-5× normal)"] --> S3["Find break point"]\n  end\n  subgraph Spike Test\n    K1["Normal"] --> K2["Sudden spike<br/>(10-20×)"] --> K3["Recovery"]\n  end\n  subgraph Endurance\n    E1["Sustained load<br/>hours/days"] --> E2["Watch: memory,<br/>leaks, degradation"]\n  end\n  style S2 stroke:#F05133\n  style K2 stroke:#FF6B6B\n  style L2 stroke:#7EE787`} />
+
+## The Four Types
+
+### Load Testing
+Simulate **expected** production traffic over a sustained period.
+
+**Goal:** Verify the system handles normal load within SLA.
+
+```
+Users: 500 concurrent
+Duration: 30 minutes
+Ramp-up: 5 minutes
+Success criteria: p95 < 500 ms, error rate < 1%
+```
+
+### Stress Testing
+Push the system **beyond** its expected capacity to find the breaking point.
+
+**Goal:** Discover where performance degrades and what fails first.
+
+```
+Users: ramp from 500 → 5000 (10× normal)
+Success criteria: identify degradation point; observe graceful degradation vs crash
+```
+
+### Spike Testing
+Apply a **sudden, sharp increase** in traffic — then observe recovery.
+
+**Goal:** Simulate flash sales, viral events, marketing emails going out.
+
+```
+Users: 100 → 2000 in 30 seconds → back to 100
+Success criteria: system recovers within 60 s; no data loss
+```
+
+### Endurance (Soak) Testing
+Apply **sustained** moderate load over a long period (hours or days).
+
+**Goal:** Find memory leaks, connection pool exhaustion, disk fill.
+
+```
+Users: 200 concurrent (normal load)
+Duration: 8 hours
+Watch: heap size, DB connections, response time trend
+```
+
+## Key Metrics
+
+| Metric | Definition | Healthy target |
+|---|---|---|
+| **Throughput** | Requests per second (RPS) | As high as possible |
+| **p50 / p95 / p99 latency** | Percentile response time | p95 < 500 ms (typical) |
+| **Error rate** | Failed requests / total | < 0.1% under load |
+| **Concurrent users** | Virtual users active simultaneously | Matches traffic model |
+| **Saturation** | % of resource capacity used | CPU < 80%, memory < 85% |
+
+## Tools Overview
+
+| Tool | Language | Best for |
+|---|---|---|
+| **k6** | JavaScript/TypeScript | Developer-friendly, CI integration |
+| **JMeter** | Java (GUI + code) | Enterprise, complex scenarios |
+| **Locust** | Python | Distributed, Python-friendly teams |
+| **Gatling** | Scala / Java | High-throughput, CI integration |
+| **Artillery** | JavaScript | Simple load tests, YAML config |
+
+## SLA vs SLO vs SLI
+
+```
+SLI (Service Level Indicator) — what you measure
+  "p95 response time = 320 ms"
+
+SLO (Service Level Objective) — your internal target
+  "p95 response time must be < 500 ms"
+
+SLA (Service Level Agreement) — contractual commitment
+  "99.9% uptime, p99 < 1 s — or penalty applies"
+```
+
+Performance tests verify SLIs meet SLOs — before the SLA is at risk.
+
+## Performance Testing in CI
+
+```yaml
+# Run load test gate in CI (k6)
+- name: Load test gate
+  run: k6 run --vus 50 --duration 2m load-test.js
+  # k6 exits non-zero if thresholds fail — CI fails automatically
+```
+
+Add performance gates to pipelines — catch regressions before production.
+
+<QuizCard client:only="react" storageKey="perf-types" questions={[
+  { q: "What is the key difference between load testing and stress testing?", a: "Load testing uses expected traffic (verify SLO compliance). Stress testing exceeds normal capacity to find the breaking point. Stress tests intentionally push past limits — load tests do not." },
+  { q: "Why run endurance tests over hours rather than minutes?", a: "Memory leaks, connection pool exhaustion, and disk fill only manifest over time. A 30-minute load test won't reveal a leak that causes OOM after 6 hours in production." },
+  { q: "What does p95 latency mean?", a: "95% of requests complete within this time. If p95 = 400 ms, 95 out of 100 users see ≤ 400 ms response. The 5 slowest users take longer. p99 and p99.9 capture the tail." },
+  { q: "What is a spike test designed to simulate?", a: "Sudden traffic bursts — flash sales, viral posts, marketing email sends. Tests whether the system scales up quickly and recovers gracefully after the spike, without data loss or sustained degradation." }
+]} />

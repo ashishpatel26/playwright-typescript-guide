@@ -1,0 +1,153 @@
+---
+title: "Cloud Testing Grids"
+level: 9
+order: 3
+description: "Run Playwright tests at scale on BrowserStack, LambdaTest, and Sauce Labs cloud grids."
+duration: "30 min"
+status: complete
+widgets:
+  - quiz
+practiceSite:
+  name: BrowserStack Automate
+  url: https://automate.browserstack.com
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## What Are Cloud Testing Grids?
+
+Cloud grids provide **remote browsers** — you run your test code locally or in CI, and the grid executes it in a cloud browser (real device or VM). Benefits:
+- Hundreds of browser/OS combinations
+- Real devices (iOS, Android, physical hardware)
+- No infrastructure to maintain
+- Parallel execution at scale
+- Automatic video, screenshots, and logs
+
+## Cloud Grid Comparison
+
+| | BrowserStack | LambdaTest | Sauce Labs |
+|---|---|---|---|
+| Playwright support | ✅ Native CDPv2 | ✅ Native | ✅ Saucectl |
+| Real devices | ✅ Extensive | ✅ Good | ✅ Good |
+| Free tier | 100 min/month | 100 min/month | 2000 min free trial |
+| Parallelism | Up to 25 | Up to 25 | Up to 50 |
+| Tunnel (localhost) | ✅ BrowserStack Local | ✅ LT Tunnel | ✅ Sauce Connect |
+
+## BrowserStack with Playwright
+
+```ts
+// playwright.config.ts
+import { defineConfig } from '@playwright/test';
+
+const caps = {
+  browser: 'chrome',
+  browser_version: 'latest',
+  os: 'Windows',
+  os_version: '11',
+  name: 'Playwright BrowserStack Test',
+  build: process.env.GITHUB_RUN_ID ?? 'local',
+  'browserstack.username': process.env.BROWSERSTACK_USERNAME,
+  'browserstack.accessKey': process.env.BROWSERSTACK_ACCESS_KEY,
+};
+
+export default defineConfig({
+  projects: [{
+    name: 'browserstack-chrome',
+    use: {
+      connectOptions: {
+        wsEndpoint: `wss://cdp.browserstack.com/playwright?caps=${encodeURIComponent(JSON.stringify(caps))}`,
+      },
+    },
+  }],
+});
+```
+
+```bash
+# Run on BrowserStack
+BROWSERSTACK_USERNAME=user BROWSERSTACK_ACCESS_KEY=key \
+  npx playwright test --project=browserstack-chrome
+```
+
+## LambdaTest with Playwright
+
+```ts
+const capabilities = {
+  browserName: 'Chrome',
+  browserVersion: 'latest',
+  'LT:Options': {
+    platform: 'Windows 11',
+    project: 'Playwright Guide',
+    build: 'Wave 9',
+    name: 'LambdaTest Test',
+    user: process.env.LT_USERNAME,
+    accessKey: process.env.LT_ACCESS_KEY,
+    network: true,
+    video: true,
+    visual: true,
+  },
+};
+
+export default defineConfig({
+  projects: [{
+    name: 'lambdatest',
+    use: {
+      connectOptions: {
+        wsEndpoint: `wss://cdp.lambdatest.com/playwright?capabilities=${encodeURIComponent(JSON.stringify(capabilities))}`,
+      },
+    },
+  }],
+});
+```
+
+## Testing Against Localhost (Tunnel)
+
+Cloud grids can't reach your `localhost` — use a tunnel:
+
+```bash
+# BrowserStack Local
+./BrowserStackLocal --key $BROWSERSTACK_ACCESS_KEY --daemon start
+
+# LambdaTest Tunnel
+./LT --user $LT_USERNAME --key $LT_ACCESS_KEY --tunnelName myTunnel --daemon
+
+# In capabilities: enable tunnel
+'browserstack.local': true
+# or
+'LT:Options': { tunnel: true, tunnelName: 'myTunnel' }
+```
+
+## Multi-Browser Matrix
+
+```ts
+// playwright.config.ts — test across browsers on BrowserStack
+const bsBase = {
+  connectOptions: { wsEndpoint: bsEndpoint(caps) },
+};
+
+export default defineConfig({
+  projects: [
+    { name: 'bs-chrome-win', use: { ...bsBase, ...caps('chrome', 'Windows 11') } },
+    { name: 'bs-firefox-win', use: { ...bsBase, ...caps('firefox', 'Windows 11') } },
+    { name: 'bs-safari-mac', use: { ...bsBase, ...caps('safari', 'OS X Ventura') } },
+    { name: 'bs-edge-win', use: { ...bsBase, ...caps('edge', 'Windows 11') } },
+  ],
+});
+```
+
+## When to Use Cloud Grids vs Local/CI
+
+| Scenario | Use cloud grid |
+|---|---|
+| Cross-browser validation | ✅ Yes |
+| Real device testing (iOS/Android) | ✅ Yes |
+| Legacy browser (IE11, old Safari) | ✅ Yes |
+| Regression suite (smoke tests) | ❌ Too slow/expensive — run locally |
+| CI smoke tests | ❌ Use Docker/GitHub Actions |
+| Visual regression | ✅ Yes (built-in visual testing) |
+
+<QuizCard client:only="react" storageKey="cloud-grids" questions={[
+  { q: "How does Playwright connect to a cloud testing grid like BrowserStack?", a: "Via a WebSocket CDP endpoint (`connectOptions.wsEndpoint`). Playwright connects over the network to a remote browser instance managed by the grid. The test code runs locally/in CI; the browser runs in the cloud." },
+  { q: "What is a tunnel (BrowserStack Local / LT Tunnel) and when is it needed?", a: "A tunnel creates a secure connection between the cloud grid and your local/private network. Required when the app under test is on localhost or a private URL the cloud grid can't reach directly." },
+  { q: "What are the cost trade-offs of running the full regression suite on a cloud grid?", a: "Cloud grids charge per minute per parallel session. A 400-test suite × 2 minutes each = 800 minutes. At typical pricing (~$0.05/min), that's $40 per full run. Reserve grids for cross-browser / device checks; run unit/smoke in CI.", senior: "Track grid usage by build. Alert when a run exceeds budget threshold — common cause is accidentally running all 400 tests on 10 browsers." },
+  { q: "Why is the `build` capability important when using cloud grids?", a: "Groups tests from the same run together in the grid's dashboard. Without it, individual tests appear as isolated entries. Use CI run ID (`process.env.GITHUB_RUN_ID`) for traceability." }
+]} />

@@ -1,0 +1,170 @@
+---
+title: "API Security Testing"
+level: 11
+order: 4
+description: "Test API endpoints for common security vulnerabilities — rate limiting, mass assignment, and data exposure."
+duration: "25 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## API Security Concerns
+
+APIs expose attack surface directly — no HTML rendering to obscure data. Common API vulnerabilities:
+
+| Vulnerability | Description |
+|---|---|
+| **Broken Object Level Auth (BOLA)** | Access other users' objects via ID manipulation |
+| **Broken Function Level Auth** | Non-admin calls admin-only endpoints |
+| **Mass Assignment** | Over-posting fields that shouldn't be writable (e.g., `isAdmin: true`) |
+| **Excessive Data Exposure** | API returns more fields than the client needs |
+| **Rate Limiting Missing** | Unlimited requests — enables brute force, scraping |
+| **Injection** | SQL, NoSQL injection via API params (covered in L11-3) |
+
+## BOLA / IDOR Testing
+
+```ts
+test('BOLA: cannot access other user orders', async ({ request }) => {
+  const userAToken = await loginAs(request, 'user-a@test.com');
+
+  // Get user A's own order (should work)
+  const ownOrder = await request.get('/api/orders/order-a-001', {
+    headers: { Authorization: `Bearer ${userAToken}` },
+  });
+  expect(ownOrder.status()).toBe(200);
+
+  // Try to access user B's order (should fail)
+  const otherOrder = await request.get('/api/orders/order-b-999', {
+    headers: { Authorization: `Bearer ${userAToken}` },
+  });
+  expect(otherOrder.status()).toBe(403);
+});
+```
+
+## Mass Assignment
+
+```ts
+test('cannot elevate privileges via mass assignment', async ({ request }) => {
+  const token = await loginAs(request, 'regular@test.com');
+
+  // Try to set isAdmin via registration or profile update
+  const res = await request.put('/api/profile', {
+    headers: { Authorization: `Bearer ${token}` },
+    data: {
+      name: 'Updated Name',
+      isAdmin: true,         // should be ignored by server
+      role: 'admin',         // should be ignored
+      credits: 99999,        // should be ignored
+    },
+  });
+
+  // Request may succeed (200) but privileged fields must not change
+  const profile = await request.get('/api/profile', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const body = await profile.json();
+  expect(body.isAdmin).toBe(false);
+  expect(body.role).toBe('user');
+});
+```
+
+## Excessive Data Exposure
+
+```ts
+test('user list does not expose password hashes or secrets', async ({ request }) => {
+  const adminToken = await loginAs(request, 'admin@test.com');
+  const res = await request.get('/api/users', {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  const users = await res.json();
+
+  for (const user of users) {
+    expect(user.passwordHash).toBeUndefined();
+    expect(user.password).toBeUndefined();
+    expect(user.twoFactorSecret).toBeUndefined();
+    expect(user.resetToken).toBeUndefined();
+    expect(user.apiKey).toBeUndefined();
+  }
+});
+
+test('public product endpoint does not expose cost price', async ({ request }) => {
+  const res = await request.get('/api/products/123');
+  const product = await res.json();
+  // Selling price is public; cost is internal
+  expect(product.price).toBeDefined();
+  expect(product.costPrice).toBeUndefined();
+  expect(product.supplierMargin).toBeUndefined();
+});
+```
+
+## Rate Limiting
+
+```ts
+test('login endpoint rate-limits after repeated failures', async ({ request }) => {
+  const attempts = 10;
+  const results: number[] = [];
+
+  for (let i = 0; i < attempts; i++) {
+    const res = await request.post('/api/login', {
+      data: { email: 'target@test.com', password: 'wrong' },
+    });
+    results.push(res.status());
+  }
+
+  // At least one response should be 429 (Too Many Requests)
+  expect(results).toContain(429);
+});
+
+test('API key endpoint rate-limits high-volume callers', async ({ request }) => {
+  const responses: number[] = [];
+
+  for (let i = 0; i < 120; i++) {  // exceed typical 100 req/min limit
+    const res = await request.get('/api/data', {
+      headers: { 'X-API-Key': process.env.TEST_API_KEY! },
+    });
+    responses.push(res.status());
+  }
+
+  expect(responses.filter(s => s === 429).length).toBeGreaterThan(0);
+});
+```
+
+## HTTP Method Enforcement
+
+```ts
+test('read-only endpoint rejects write methods', async ({ request }) => {
+  const token = await loginAs(request, 'user@test.com');
+  const headers = { Authorization: `Bearer ${token}` };
+
+  // GET is allowed
+  expect((await request.get('/api/reports/2024', { headers })).status()).toBe(200);
+
+  // Write methods should be rejected on read-only resources
+  expect((await request.post('/api/reports/2024', { headers })).status()).toBe(405);
+  expect((await request.delete('/api/reports/2024', { headers })).status()).toBe(405);
+});
+```
+
+## API Security Checklist for Testers
+
+```
+☐ BOLA: test accessing other users' resources by ID
+☐ Function-level auth: test non-admin calling admin endpoints
+☐ Mass assignment: POST/PUT with extra privilege fields
+☐ Data exposure: check response fields for sensitive data
+☐ Rate limiting: brute force login/API endpoints
+☐ HTTP methods: verify verbs are restricted correctly
+☐ Error messages: no stack traces or DB info in 4xx/5xx
+☐ JWT: test expired, tampered, algorithm-confusion attacks
+☐ CORS: verify allowed origins are not wildcard (*)
+```
+
+<QuizCard client:only="react" storageKey="sec-api" questions={[
+  { q: "What is BOLA (Broken Object Level Authorization) and how is it different from broken function-level auth?", a: "BOLA: accessing another user's objects by guessing/changing their ID (horizontal privilege). Broken function-level auth: a regular user calls an admin-only endpoint (vertical privilege). Both are access control failures at different levels." },
+  { q: "How do you test for mass assignment vulnerabilities without knowing the exact field names?", a: "Try common privilege fields: `isAdmin`, `role`, `credits`, `balance`, `verified`. Submit them in PUT/POST requests and verify they don't change after the update. Also try `id` mutation (changing resource ownership)." },
+  { q: "What does excessive data exposure look like and why is it a security risk?", a: "API returns fields the client doesn't display: `passwordHash`, `internalNotes`, `costPrice`, `apiKey`. A browser client discards unused fields, but an API client (attacker) reads them all. Test by asserting sensitive fields are absent from responses." },
+  { q: "What HTTP status indicates rate limiting and what does it mean?", a: "429 Too Many Requests. Includes a `Retry-After` header indicating when the client can try again. Tests should verify rate limiting activates after N requests, protecting against brute force and enumeration attacks." }
+]} />

@@ -1,0 +1,125 @@
+---
+title: "Cloud vs Local: Strategy & Cost"
+level: 9
+order: 4
+description: "Decide when to use cloud grids, self-hosted CI, or local execution — with cost modelling."
+duration: "20 min"
+status: complete
+widgets:
+  - quiz
+---
+
+import QuizCard from '../../../components/react/QuizCard';
+
+## Execution Tier Model
+
+Match test type to execution tier:
+
+| Tier | Where | When | Examples |
+|---|---|---|---|
+| Local | Developer machine | Every save (TDD) | Unit tests, component tests |
+| Self-hosted CI | Docker / GitHub Actions | Every commit | Smoke tests, fast e2e |
+| Cloud Grid | BrowserStack / LambdaTest | PR merge, nightly | Cross-browser, device, visual |
+| Cloud Runner | AWS Fargate / GCP Cloud Run | On-demand | Long regression, load test |
+
+## Cost Model
+
+```
+Self-hosted CI (GitHub Actions free tier):
+  2,000 min/month free on public repos
+  2,000 min/month free on private repos (then $0.008/min)
+  400 tests × 3 s = 20 min per run → 100 free runs/month
+
+Cloud Grid (BrowserStack):
+  ~ $0.05/min on Automate plan
+  400 tests × 5 s = 33 min × 5 browsers = 165 min
+  165 × $0.05 = $8.25 per full cross-browser run
+  Daily cross-browser run = ~$250/month
+
+Self-hosted runner (AWS EC2 t3.xlarge):
+  $0.166/hr on-demand → pause between runs
+  Runs 2 hrs/day = $0.33/day = ~$10/month for the machine
+  But: maintain OS, Playwright versions, browser dependencies
+```
+
+## Decision Framework
+
+```
+START
+  │
+  ├─ Need real iOS/Android device? ──► Cloud Grid
+  │
+  ├─ Need IE11 or legacy Safari? ────► Cloud Grid
+  │
+  ├─ Cross-browser (Chrome + Firefox + Safari)? ──► Cloud Grid for nightly
+  │                                                   + local CI for smoke
+  ├─ Large parallel suite (>200 tests)? ────────────► Cloud Runner (Fargate)
+  │                                                   or GitHub Actions matrix
+  ├─ Security: app can't leave network? ─────────────► Self-hosted runner only
+  │
+  └─ Standard smoke / regression? ──────────────────► GitHub Actions (free tier)
+```
+
+## Hybrid Strategy (Recommended)
+
+```yaml
+# CI pipeline — tiered execution
+on:
+  push:
+    branches: [main, 'feature/*']
+
+jobs:
+  smoke:           # every push — fast gate
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx playwright test --grep @smoke --project=chromium
+
+  regression:      # on merge to main only
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx playwright test --project=chromium,firefox
+
+  cross-browser:   # nightly — cloud grid
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx playwright test --project=bs-chrome,bs-safari,bs-mobile
+        env:
+          BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+          BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+```
+
+## Tagging Tests by Tier
+
+```ts
+// Tag tests with execution tier
+test('login smoke @smoke @ci', async ({ page }) => { /* ... */ });
+test('checkout full flow @regression', async ({ page }) => { /* ... */ });
+test('visual regression @visual @cloud', async ({ page }) => { /* ... */ });
+
+// Run by tag
+npx playwright test --grep @smoke       // fast gate
+npx playwright test --grep @regression  // full suite
+npx playwright test --grep @cloud       // cloud grid only
+```
+
+## Self-Hosted Runner Trade-offs
+
+| | GitHub-hosted | Self-hosted |
+|---|---|---|
+| Setup | Zero | Significant |
+| Maintenance | None | OS patches, runner updates |
+| Cost | Free tier, then metered | Fixed infra cost |
+| Security | Isolated (fresh VM per job) | Persistent — clean between runs |
+| Network access | Public internet only | Internal network access |
+| Custom tools | Install each run | Pre-installed |
+
+Use self-hosted when: internal network access required, custom hardware, GPU, or regulatory compliance.
+
+<QuizCard client:only="react" storageKey="cloud-strategy" questions={[
+  { q: "What is the recommended execution tier for a smoke test suite that runs on every commit?", a: "Self-hosted CI or GitHub Actions (GitHub-hosted runner). Fast, free/cheap, no cloud grid needed for smoke. Cloud grids are reserved for cross-browser and device testing." },
+  { q: "When does it make financial sense to use a cloud grid vs running extra GitHub Actions minutes?", a: "Cloud grid when you need browsers/devices not available in CI runners (real iOS, legacy Safari). For standard Chrome/Firefox/Edge, GitHub Actions is cheaper — grids charge per-minute per browser." },
+  { q: "What is a hybrid CI strategy and why is it preferred?", a: "Different test tiers run in different environments: smoke on every push in CI, regression on merge, cross-browser on nightly schedule in cloud grid. Balances speed (fast smoke gate) with coverage (full cross-browser weekly)." },
+  { q: "What is the main reason to use a self-hosted CI runner over GitHub-hosted?", a: "Internal network access — when the app under test is on a private network not reachable from GitHub's cloud runners. Also: custom hardware, regulatory requirements that prohibit external cloud access." }
+]} />
